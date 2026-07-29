@@ -4,11 +4,19 @@ from datetime import UTC, datetime
 
 from timesheet.config import Config
 from timesheet.model import Commit
-from timesheet.summarize import summarize_block
+from timesheet.summarize import classify_focus, summarize_block
 
 
-def _c(msg: str) -> Commit:
-    return Commit(ts=datetime(2026, 7, 1, 10, tzinfo=UTC), repo="r", message=msg)
+def _c(msg: str, kind: str = "commit") -> Commit:
+    return Commit(ts=datetime(2026, 7, 1, 10, tzinfo=UTC), repo="r", message=msg, kind=kind)
+
+
+def test_classify_non_commit_sessions_by_kind():
+    cfg = Config()
+    assert classify_focus([_c("x", "review")], cfg) == cfg.review_project
+    assert classify_focus([_c("x", "pr")], cfg) == cfg.pr_project
+    assert classify_focus([_c("x", "issue")], cfg) == cfg.issue_project
+    assert classify_focus([_c("add ci pipeline")], cfg) == "CI/CD"   # commits still by keyword
 
 
 def test_summary_is_one_clean_complete_phrase():

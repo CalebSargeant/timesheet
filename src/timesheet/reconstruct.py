@@ -77,6 +77,8 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
     day_events = [c for c in commits if c.ts.date() == date.date()]
     day_commits = [c for c in day_events if c.kind == "commit"]
     day_reviews = [c for c in day_events if c.kind == "review"]
+    day_prs = [c for c in day_events if c.kind == "pr"]
+    day_issues = [c for c in day_events if c.kind == "issue"]
     # Start at the configured hour (08:30), but open earlier if the day's own
     # activity — an early commit or a meeting — proves work began sooner. Never
     # before the floor, so a stray late-night commit can't drag the day open.
@@ -103,14 +105,20 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
         anchors.append(Block(span[0], span[1], src[1], src[2], src[3]))
 
     # The day length is DRIVEN by real effort: rota + meetings + estimated coding
-    # time (git-hours of the day's commits) + PR-review credit + a little admin,
-    # floored to a normal day and capped so a marathon day stays believable. A heavy
-    # coding/review day shows well over 8h, so a prolific week is not flattened to 40h.
+    # time (git-hours of the day's commits) + non-commit GitHub work (reviews, PRs
+    # opened, issues) + a little admin, floored to a normal day and capped so a
+    # marathon day stays believable. A heavy day shows well over 8h, so a prolific
+    # week is not flattened to 40h.
     coding_min = _git_hours(day_commits, cfg.session_gap_minutes, cfg.first_commit_minutes) * 60.0
-    # Reviews are credited per distinct PR (deduped in the collector), capped per day,
-    # NOT via git-hours: a review is a point event, not 2h of lead-in work.
-    review_min = min(len(day_reviews) * cfg.review_minutes_each, cfg.review_cap_minutes)
-    activity_min = coding_min + review_min
+    # Non-commit work is credited per item (reviews deduped per PR in the collector),
+    # capped per day — NOT via git-hours: these are point events, not 2h of lead-in.
+    noncommit_min = min(
+        len(day_reviews) * cfg.review_minutes_each
+        + len(day_prs) * cfg.pr_minutes_each
+        + len(day_issues) * cfg.issue_minutes_each,
+        cfg.noncommit_cap_minutes,
+    )
+    activity_min = coding_min + noncommit_min
     fixed_min = sum(b.minutes for b in anchors)
     target = min(max(int(fixed_min + activity_min + cfg.admin_floor_minutes),
                      cfg.min_day_minutes), cfg.max_day_minutes)
@@ -118,12 +126,14 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
                   max((b.end for b in anchors), default=start))
     free = free_intervals((start, day_end), [(b.start, b.end) for b in anchors])
 
-    # The day's GHE work themes: one per activity session (commits and reviews),
-    # classified + summarised. A review-only session classifies as 'Code review'.
+    # The day's GHE work themes, clustered PER KIND so PRs, issues, reviews and
+    # commits each surface with their own label (Pull requests / Issues / Code review
+    # / a commit category) instead of dissolving into one mixed 'Development' session.
     themes: list[tuple[str, str]] = []
-    for sess in _cluster(day_events, cfg.session_gap_minutes):
-        project = classify_focus(sess, cfg)
-        themes.append((project, summarize_block(sess, project, cfg, llm)))
+    for group in (day_commits, day_prs, day_issues, day_reviews):
+        for sess in _cluster(group, cfg.session_gap_minutes):
+            project = classify_focus(sess, cfg)
+            themes.append((project, summarize_block(sess, project, cfg, llm)))
 
     # Fill the free time: about `activity_min` of it is the GHE work (labelled from the
     # day's themes, cycled across the chunks); the remainder is admin. So the sheet's
@@ -134,8 +144,9 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
     chunks = [p for iv in free
               for p in _split(iv, cfg.max_admin_minutes, cfg.snap_minutes)
               if mins(p) >= cfg.snap_minutes]
+    admin_taaks = cfg.admin_taaks or (cfg.admin_taak,)
     fill: list[Block] = []
-    assigned, ti = 0, 0
+    assigned, ti, ai = 0, 0, 0
     for a, b in chunks:
         if themes and assigned < coding_budget:
             project, taak = themes[ti % len(themes)]
@@ -143,7 +154,9 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
             assigned += mins((a, b))
             fill.append(Block(a, b, project, taak, "focus"))
         else:
-            fill.append(Block(a, b, cfg.admin_project, cfg.admin_taak, "admin"))
+            # rotate the admin label so a quiet day isn't a column of identical rows
+            fill.append(Block(a, b, cfg.admin_project, admin_taaks[ai % len(admin_taaks)], "admin"))
+            ai += 1
 
     blocks = sorted(anchors + fill, key=lambda b: b.start)
     return Day(date=date, blocks=blocks, dropped_after_hours=0)

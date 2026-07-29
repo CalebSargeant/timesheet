@@ -1,0 +1,23 @@
+# Org Chargate security gate (MegaLinter-backed net-new PR-diff gating), consumed
+# as the Chargate marketplace action. Gates on net-new findings on pull requests.
+name: Security
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+  actions: read
+
+jobs:
+  chargate:
+    runs-on: ${{ vars.SELFHOSTED_GITHUB_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: magmamoose/chargate@2969cda6eddef2e4a2cd195eb21d40d4d1345300 # v2.9.0
+        with:
+          defectdojo_url: ${{ vars.MM_DEFECTDOJO_URL }}
+          defectdojo_token: ${{ secrets.MM_DEFECTDOJO_API_KEY }}
+          dependency_track_url: ${{ vars.MM_DEPENDENCY_TRACK_URL }}
+          dependency_track_token: ${{ secrets.MM_DEPENDENCY_TRACK_API_KEY }}

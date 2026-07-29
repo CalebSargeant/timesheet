@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gts.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gts.labels" . | nindent 4 }}
+data:
+  # Non-secret runtime config. Secrets (DATABASE_URL, M365_ICS_URL, GHE_TOKEN,
+  # INGEST_TOKEN, SMTP_PASSWORD, …) come from the -env Secret, not here.
+  TZ: {{ .Values.config.tz | quote }}
+  DAY_START: {{ .Values.config.dayStart | quote }}
+  TARGET_MINUTES: {{ .Values.config.targetMinutes | quote }}
+  ROTA_ENABLED: {{ .Values.config.rotaEnabled | quote }}
+  ROTA_MINUTES: {{ .Values.config.rotaMinutes | quote }}
+  INCLUDE_AFTER_HOURS: {{ .Values.config.includeAfterHours | quote }}
+  PUBLIC_URL: {{ .Values.config.publicUrl | quote }}
+  DOWNLOAD_TTL_SECONDS: {{ .Values.config.downloadTtlSeconds | quote }}
+  GHE_HOST: {{ .Values.config.ghe.host | quote }}
+  GHE_ORG: {{ .Values.config.ghe.org | quote }}
+  GHE_USER: {{ .Values.config.ghe.user | quote }}
+  {{- with .Values.config.email.smtpHost }}
+  SMTP_HOST: {{ . | quote }}
+  {{- end }}
+  SMTP_PORT: {{ .Values.config.email.smtpPort | quote }}
+  SMTP_STARTTLS: {{ .Values.config.email.smtpStartTls | quote }}
+  REPORT_EMAIL_FROM: {{ .Values.config.email.from | quote }}
+  REPORT_EMAIL_TO: {{ .Values.config.email.to | quote }}

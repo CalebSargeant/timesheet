@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "github-timesheet"
+version = "0.1.0"
+description = "Reconstruct a PinkRoccade 'Uren' timesheet from real calendar + GitHub-Enterprise signals"
+requires-python = ">=3.11"
+dependencies = [
+    "openpyxl>=3.1",
+]
+
+[project.optional-dependencies]
+# The self-hosted service; the reconstruction core needs none of these.
+service = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "httpx>=0.27",
+    "msal>=1.28",            # device-code auth against a Microsoft first-party client
+    "icalendar>=5.0",        # published-ICS calendar path
+    "recurring-ical-events>=2.2",   # expand recurring events (daily standup) in the ICS
+    "psycopg[binary]>=3.1",  # shared firefly CNPG
+    "apscheduler>=3.10",
+]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.scripts]
+timesheet-demo = "timesheet.demo:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

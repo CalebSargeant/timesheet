@@ -1,0 +1,58 @@
+{{- if .Values.cronjob.enabled -}}
+# kics-scan disable=caa3479d-885d-4882-9aac-95e5e78ef5c2,7c81d34c-8e5a-402b-9798-9f442630e678,8b36775e-183d-4d46-b0f7-96a6f34a723f
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "gts.fullname" . }}-refresh
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gts.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.cronjob.schedule | quote }}
+  {{- with .Values.cronjob.timeZone }}
+  timeZone: {{ . | quote }}
+  {{- end }}
+  concurrencyPolicy: {{ .Values.cronjob.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.cronjob.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.cronjob.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.cronjob.backoffLimit }}
+      template:
+        metadata:
+          labels:
+            {{- include "gts.selectorLabels" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "gts.serviceAccountName" . }}
+          {{- with .Values.image.pullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          containers:
+            - name: refresh
+              image: {{ include "gts.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["python", "-m", "timesheet.run"]
+              args:
+                {{- if .Values.cronjob.email }}
+                - "--email"
+                {{- end }}
+              envFrom:
+                {{- include "gts.envFrom" . | nindent 16 }}
+              {{- with .Values.extraEnv }}
+              env:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              securityContext:
+                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              volumeMounts:
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: tmp
+              emptyDir: {}
+{{- end -}}

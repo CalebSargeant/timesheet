@@ -1,0 +1,10 @@
+github-timesheet deployed.
+
+  Web:     https://{{ .Values.config.publicUrl | trimPrefix "https://" | trimPrefix "http://" }}
+  Refresh: CronJob {{ include "gts.fullname" . }}-refresh @ {{ .Values.cronjob.schedule }} ({{ .Values.cronjob.timeZone }})
+
+The nightly CronJob reconstructs the current week (calendar from M365_ICS_URL +
+commits from GHE) into CNPG; the web pod serves it behind Cloudflare Access.
+
+Kick a refresh now:
+  kubectl -n {{ .Release.Namespace }} create job --from=cronjob/{{ include "gts.fullname" . }}-refresh manual-$(date +%s)

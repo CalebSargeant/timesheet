@@ -1,0 +1,6 @@
+apiVersion: v2
+name: github-timesheet
+description: Reconstruct a PinkRoccade 'Uren' timesheet from a published-calendar ICS + GHE commits
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

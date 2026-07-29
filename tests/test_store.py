@@ -27,3 +27,12 @@ def test_stale_version_is_a_miss(tmp_path, monkeypatch):
     # a later deploy bumps the reconstruction logic:
     monkeypatch.setattr(store_mod, "RECONSTRUCT_VERSION", store_mod.RECONSTRUCT_VERSION + 1)
     assert s.get_days(monday) is None           # the old row now counts as a cache miss
+
+
+def test_is_full_reflects_saved_flag(tmp_path):
+    s = FileStore(str(tmp_path))
+    monday = date(2026, 7, 20)
+    s.save(monday, {}, [_day(monday)], full=False)   # a fast web-warmed week
+    assert s.is_full(monday) is False                # so the refresh will upgrade it
+    s.save(monday, {}, [_day(monday)], full=True)    # the background refresh ran
+    assert s.is_full(monday) is True

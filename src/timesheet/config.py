@@ -14,7 +14,8 @@ from dataclasses import dataclass
 # mismatch as a cache miss, so a deploy auto-recomputes stale weeks — no manual
 # cache clearing. v2: dropped the template on-call rota; single-phrase summaries.
 # v3: 08:30 day start (earlier only if the day's activity says so).
-RECONSTRUCT_VERSION = 3
+# v4: PR reviews count as effort (background refresh), not just commits.
+RECONSTRUCT_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,15 @@ class Config:
     admin_project: str = "Administratie"
     admin_taak: str = "Mail / GitHub / Teams"
 
+    # PR reviews as effort (senior work that leaves no default-branch commit). Pulled
+    # in the background refresh only (per-PR REST calls are too heavy for a page view).
+    # Credited per distinct PR reviewed (NOT via the commit git-hours lead-in, which
+    # would over-count), capped per day so a review-heavy day stays believable.
+    include_reviews: bool = True
+    review_project: str = "Code review"
+    review_minutes_each: int = 12                        # ~12 min of effort per PR reviewed
+    review_cap_minutes: int = 180                        # at most 3h/day of review credit
+
     # Optional AI label polish via the house LiteLLM proxy (OpenAI-compatible).
     # Empty model => AI off and the deterministic summariser is used. Applied ONLY
     # in the background refresh (run.py), never in a web request, because the
@@ -101,6 +111,7 @@ class Config:
             rota_enabled=_b("ROTA_ENABLED", False),
             rota_minutes=_i("ROTA_MINUTES", 75),
             include_after_hours=_b("INCLUDE_AFTER_HOURS", False),
+            include_reviews=_b("INCLUDE_REVIEWS", True),
             llm_base_url=e.get("LITELLM_BASE_URL", "https://litellm.sargeant.co"),
             llm_api_key=e.get("LITELLM_API_KEY", ""),
             llm_model=e.get("LITELLM_MODEL", ""),

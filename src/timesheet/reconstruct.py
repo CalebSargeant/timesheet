@@ -74,10 +74,13 @@ def _at(day: datetime, hhmm: str) -> datetime:
 
 def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commit],
                     cfg: Config, tz: ZoneInfo, llm=None) -> Day:
-    day_commits = [c for c in commits if c.ts.date() == date.date()]
+    day_events = [c for c in commits if c.ts.date() == date.date()]
+    day_commits = [c for c in day_events if c.kind == "commit"]
+    day_reviews = [c for c in day_events if c.kind == "review"]
     # Start at the configured hour (08:30), but open earlier if the day's own
     # activity — an early commit or a meeting — proves work began sooner. Never
     # before the floor, so a stray late-night commit can't drag the day open.
+    # (Reviews are excluded here: they can land off-hours and don't mark a start.)
     default_start = _at(date, cfg.day_start)
     earliest = min([c.ts for c in day_commits] + [m.start for m in meetings],
                    default=default_start)
@@ -100,29 +103,34 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
         anchors.append(Block(span[0], span[1], src[1], src[2], src[3]))
 
     # The day length is DRIVEN by real effort: rota + meetings + estimated coding
-    # time (git-hours of the day's commits) + a little admin, floored to a normal day
-    # and capped so a marathon day stays believable. A heavy coding day shows well
-    # over 8h, so a prolific week is not flattened to 40h.
+    # time (git-hours of the day's commits) + PR-review credit + a little admin,
+    # floored to a normal day and capped so a marathon day stays believable. A heavy
+    # coding/review day shows well over 8h, so a prolific week is not flattened to 40h.
     coding_min = _git_hours(day_commits, cfg.session_gap_minutes, cfg.first_commit_minutes) * 60.0
+    # Reviews are credited per distinct PR (deduped in the collector), capped per day,
+    # NOT via git-hours: a review is a point event, not 2h of lead-in work.
+    review_min = min(len(day_reviews) * cfg.review_minutes_each, cfg.review_cap_minutes)
+    activity_min = coding_min + review_min
     fixed_min = sum(b.minutes for b in anchors)
-    target = min(max(int(fixed_min + coding_min + cfg.admin_floor_minutes),
+    target = min(max(int(fixed_min + activity_min + cfg.admin_floor_minutes),
                      cfg.min_day_minutes), cfg.max_day_minutes)
     day_end = max(start + timedelta(minutes=target),
                   max((b.end for b in anchors), default=start))
     free = free_intervals((start, day_end), [(b.start, b.end) for b in anchors])
 
-    # The day's GHE work themes: one per commit session (classified + summarised).
+    # The day's GHE work themes: one per activity session (commits and reviews),
+    # classified + summarised. A review-only session classifies as 'Code review'.
     themes: list[tuple[str, str]] = []
-    for sess in _cluster(day_commits, cfg.session_gap_minutes):
+    for sess in _cluster(day_events, cfg.session_gap_minutes):
         project = classify_focus(sess, cfg)
         themes.append((project, summarize_block(sess, project, cfg, llm)))
 
-    # Fill the free time: about `coding_min` of it is the GHE work (labelled from the
-    # day's commit themes, cycled across the chunks); the remainder is admin. So the
-    # sheet's coding hours track the git-hours estimate, and generic "Mail / GitHub /
-    # Teams" is only the leftover, not the bulk of a busy day.
+    # Fill the free time: about `activity_min` of it is the GHE work (labelled from the
+    # day's themes, cycled across the chunks); the remainder is admin. So the sheet's
+    # focus hours track the effort estimate, and generic "Mail / GitHub / Teams" is
+    # only the leftover, not the bulk of a busy day.
     free_total = sum(mins(iv) for iv in free)
-    coding_budget = max(0, min(round(coding_min), free_total - cfg.admin_floor_minutes))
+    coding_budget = max(0, min(round(activity_min), free_total - cfg.admin_floor_minutes))
     chunks = [p for iv in free
               for p in _split(iv, cfg.max_admin_minutes, cfg.snap_minutes)
               if mins(p) >= cfg.snap_minutes]

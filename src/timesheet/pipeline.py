@@ -61,13 +61,16 @@ def build_week(week_start: date, raw_meetings: list[dict], raw_commits: list[dic
     return reconstruct_week(meetings, commits, ws, cfg, llm)
 
 
-def collect_week(week_start: date, cfg: Config, llm=None) -> list[Day]:
+def collect_week(week_start: date, cfg: Config, llm=None, *, full: bool = False) -> list[Day]:
     """Live pull for the cron: calendar + commits for the week, then build.
 
     Calendar source, in preference order (all sidestep an Azure app registration):
       1. M365_ICS_URL   — a published-calendar ICS link (no Power Automate)
       2. Power Automate — pushes to /api/ingest instead (see build_from_ingest)
       3. device-code Graph — only if the tenant allows it (it doesn't in LOCGOV)
+
+    `full` adds the heavier signals (PR reviews) that a page view can't afford; the
+    web path calls this without it (commits only, fast), the nightly refresh with it.
     """
     import os
 
@@ -87,6 +90,12 @@ def collect_week(week_start: date, cfg: Config, llm=None) -> list[Day]:
     since = monday.isoformat()
     until = (monday + timedelta(days=6)).isoformat()
     raw_commits = ghe.fetch_commits(since, until)
+    if full and cfg.include_reviews:
+        from .collectors import ghe_reviews
+        try:
+            raw_commits = raw_commits + ghe_reviews.fetch_reviews(since, until)
+        except Exception:  # noqa: BLE001, S110 — reviews are a bonus signal, never block the week
+            pass
 
     return build_week(monday, raw_meetings, raw_commits, cfg, llm)
 

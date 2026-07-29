@@ -13,10 +13,19 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Config:
     tz: str = "Europe/Amsterdam"
-    workdays: tuple[int, ...] = (0, 1, 2, 3, 4)          # Mon–Fri
+    workdays: tuple[int, ...] = (0, 1, 2, 3, 4)          # Mon-Fri
     day_start: str = "07:30"
-    target_minutes: int = 480                            # soft daily target (8:00)
     snap_minutes: int = 15                               # round edges to :00/:15/:30/:45
+
+    # The day length is DRIVEN by estimated effort (git-hours of the day's commits)
+    # + meetings + rota, not a flat target: a heavy coding day shows more than 8h so
+    # a prolific week isn't flattened to 40h. Floored so quiet days still read ~8h
+    # ("40h on a slow week"); capped so a marathon day stays believable.
+    min_day_minutes: int = 480                           # floor: a normal 8h day
+    max_day_minutes: int = 720                           # cap: 12h, a long-but-real day
+    admin_floor_minutes: int = 30                        # always a little admin
+    session_gap_minutes: int = 120                       # git-hours: new session after a 2h gap
+    first_commit_minutes: int = 120                      # git-hours: lead-in before the 1st commit
 
     # Block-length hygiene so a thin-meeting day doesn't render one giant block.
     min_block_minutes: int = 30
@@ -52,8 +61,6 @@ class Config:
     admin_project: str = "Administratie"
     admin_taak: str = "Mail / GitHub / Teams"
 
-    session_gap_minutes: int = 120                       # git-hours clustering gap
-
     @staticmethod
     def from_env(env: dict | None = None) -> Config:
         e = env or os.environ
@@ -62,7 +69,8 @@ class Config:
         return Config(
             tz=e.get("TZ", "Europe/Amsterdam"),
             day_start=e.get("DAY_START", "07:30"),
-            target_minutes=_i("TARGET_MINUTES", 480),
+            min_day_minutes=_i("MIN_DAY_MINUTES", 480),
+            max_day_minutes=_i("MAX_DAY_MINUTES", 720),
             rota_enabled=_b("ROTA_ENABLED", True),
             rota_minutes=_i("ROTA_MINUTES", 75),
             include_after_hours=_b("INCLUDE_AFTER_HOURS", False),

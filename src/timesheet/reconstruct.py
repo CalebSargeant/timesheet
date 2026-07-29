@@ -51,6 +51,22 @@ def _split(iv: Interval, cap: int, step: int) -> list[Interval]:
     return out
 
 
+def _git_hours(commits: list[Commit], gap_min: int, lead_min: int) -> float:
+    """Empirical coding time from commit timestamps (the kimmobrunfeldt session
+    heuristic, matching github-contributions/effort.session_hours): consecutive
+    commits closer than `gap_min` share a session (add the real gap); a larger gap
+    starts a new session (credit a fixed lead-in for the unseen work before it)."""
+    ts = sorted(c.ts.timestamp() for c in commits)
+    if not ts:
+        return 0.0
+    gap, lead = gap_min * 60, lead_min * 60
+    seconds = float(lead)
+    for prev, cur in pairwise(ts):
+        delta = cur - prev
+        seconds += delta if delta < gap else lead
+    return seconds / 3600.0
+
+
 def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commit],
                     cfg: Config, tz: ZoneInfo, llm=None) -> Day:
     start = date.replace(hour=parse_hhmm(cfg.day_start) // 60,
@@ -72,40 +88,44 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
                   key=lambda f: abs((f[0][0] - span[0]).total_seconds()), default=fixed[0])
         anchors.append(Block(span[0], span[1], src[1], src[2], src[3]))
 
-    day_end = max(start + timedelta(minutes=cfg.target_minutes),
+    # The day length is DRIVEN by real effort: rota + meetings + estimated coding
+    # time (git-hours of the day's commits) + a little admin, floored to a normal day
+    # and capped so a marathon day stays believable. A heavy coding day shows well
+    # over 8h, so a prolific week is not flattened to 40h.
+    day_commits = [c for c in commits if c.ts.date() == date.date()]
+    coding_min = _git_hours(day_commits, cfg.session_gap_minutes, cfg.first_commit_minutes) * 60.0
+    fixed_min = sum(b.minutes for b in anchors)
+    target = min(max(int(fixed_min + coding_min + cfg.admin_floor_minutes),
+                     cfg.min_day_minutes), cfg.max_day_minutes)
+    day_end = max(start + timedelta(minutes=target),
                   max((b.end for b in anchors), default=start))
     free = free_intervals((start, day_end), [(b.start, b.end) for b in anchors])
 
     # The day's GHE work themes: one per commit session (classified + summarised).
-    # Every session counts (incl. after-hours) — the point is to represent the work,
-    # not its exact clock time (the sheet is a normalised ~8h/day narrative).
-    day_commits = [c for c in commits if c.ts.date() == date.date()]
     themes: list[tuple[str, str]] = []
     for sess in _cluster(day_commits, cfg.session_gap_minutes):
         project = classify_focus(sess, cfg)
         themes.append((project, summarize_block(sess, project, cfg, llm)))
 
-    # Fill the free workday time. When there IS GHE work that day, most of it is
-    # that work — labelled from the day's commit themes, cycled across the free
-    # chunks — with a single admin slice for realism on longer days. With no GHE
-    # activity it's all admin. This keeps the ~8h/day target while making the sheet
-    # reflect the actual GHE work instead of generic "Mail / GitHub / Teams".
+    # Fill the free time: about `coding_min` of it is the GHE work (labelled from the
+    # day's commit themes, cycled across the chunks); the remainder is admin. So the
+    # sheet's coding hours track the git-hours estimate, and generic "Mail / GitHub /
+    # Teams" is only the leftover, not the bulk of a busy day.
+    free_total = sum(mins(iv) for iv in free)
+    coding_budget = max(0, min(round(coding_min), free_total - cfg.admin_floor_minutes))
     chunks = [p for iv in free
               for p in _split(iv, cfg.max_admin_minutes, cfg.snap_minutes)
               if mins(p) >= cfg.snap_minutes]
     fill: list[Block] = []
-    if themes:
-        admin_idx = len(chunks) - 1 if len(chunks) >= 3 else -1   # one admin slice, longer days
-        ti = 0
-        for i, (a, b) in enumerate(chunks):
-            if i == admin_idx:
-                fill.append(Block(a, b, cfg.admin_project, cfg.admin_taak, "admin"))
-            else:
-                project, taak = themes[ti % len(themes)]
-                ti += 1
-                fill.append(Block(a, b, project, taak, "focus"))
-    else:
-        fill = [Block(a, b, cfg.admin_project, cfg.admin_taak, "admin") for a, b in chunks]
+    assigned, ti = 0, 0
+    for a, b in chunks:
+        if themes and assigned < coding_budget:
+            project, taak = themes[ti % len(themes)]
+            ti += 1
+            assigned += mins((a, b))
+            fill.append(Block(a, b, project, taak, "focus"))
+        else:
+            fill.append(Block(a, b, cfg.admin_project, cfg.admin_taak, "admin"))
 
     blocks = sorted(anchors + fill, key=lambda b: b.start)
     return Day(date=date, blocks=blocks, dropped_after_hours=0)

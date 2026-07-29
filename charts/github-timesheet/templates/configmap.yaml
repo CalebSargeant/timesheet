@@ -10,10 +10,13 @@ data:
   # INGEST_TOKEN, SMTP_PASSWORD, …) come from the -env Secret, not here.
   TZ: {{ .Values.config.tz | quote }}
   DAY_START: {{ .Values.config.dayStart | quote }}
-  TARGET_MINUTES: {{ .Values.config.targetMinutes | quote }}
   ROTA_ENABLED: {{ .Values.config.rotaEnabled | quote }}
   ROTA_MINUTES: {{ .Values.config.rotaMinutes | quote }}
   INCLUDE_AFTER_HOURS: {{ .Values.config.includeAfterHours | quote }}
+  # AI label polish (optional). Empty model => deterministic summaries. Key comes
+  # from the -env Secret (LITELLM_API_KEY), not here.
+  LITELLM_BASE_URL: {{ .Values.config.llm.baseUrl | quote }}
+  LITELLM_MODEL: {{ .Values.config.llm.model | quote }}
   PUBLIC_URL: {{ .Values.config.publicUrl | quote }}
   DOWNLOAD_TTL_SECONDS: {{ .Values.config.downloadTtlSeconds | quote }}
   GHE_HOST: {{ .Values.config.ghe.host | quote }}

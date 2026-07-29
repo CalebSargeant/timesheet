@@ -43,19 +43,27 @@ def summarize_block(commits: list[Commit], project: str, cfg: Config, llm=None) 
             + "\n".join(f"- {s}" for s in subjects)
         )
         try:
-            out = llm(prompt).strip().strip('"')
+            raw = llm(prompt).strip()
+            out = raw.splitlines()[0].strip().strip('"').strip() if raw else ""
             if out:
                 return _wb_trunc(out, 90)
         except Exception:  # noqa: BLE001, S110 — any LLM failure must fall back, never raise
             pass  # deterministic fallback below
+
+    # Deterministic: one clean, complete phrase — the most descriptive commit
+    # subject of the session. Concatenating several subjects and hard-truncating
+    # produced unreadable lines like "GHE auth ...; expose acc…"; a single tidy
+    # phrase reads far better on the sheet, and the day's breadth already shows
+    # through the separate blocks.
     seen: set[str] = set()
     picks: list[str] = []
     for s in subjects:
-        c = _clean_subject(s)
-        c = re.sub(r"\s*\(#\d+\)\s*$", "", c)          # drop trailing (#123)
-        key = c[:24].lower()
+        c = re.sub(r"\s*\(#\d+\)\s*$", "", _clean_subject(s)).strip()   # drop trailing (#123)
+        key = c[:28].lower()
         if key and key not in seen:
             seen.add(key)
             picks.append(c)
-    label = "; ".join(picks[:3])
-    return _wb_trunc(label, 70) if label else project
+    if not picks:
+        return project
+    headline = max(picks, key=len)                     # most descriptive subject wins
+    return _wb_trunc(headline, 80)

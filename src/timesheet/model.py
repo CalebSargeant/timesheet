@@ -19,6 +19,7 @@ class Commit:
     ts: datetime             # tz-aware, local
     repo: str
     message: str             # first line, merges already dropped
+    kind: str = "commit"     # commit | review — a review is a timestamped work event too
 
 
 @dataclass

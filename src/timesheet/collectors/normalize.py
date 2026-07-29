@@ -52,9 +52,10 @@ def normalize_commits(raw: list[dict], tz: ZoneInfo) -> list[Commit]:
     out: list[Commit] = []
     for c in raw:
         ts = datetime.fromisoformat(c["ts_local"]).astimezone(tz)
+        kind = c.get("kind", "commit")
         msg = (c.get("message") or "").split("\n")[0].strip()
-        if msg.lower().startswith("merge "):     # merges aren't authored work
+        if kind == "commit" and msg.lower().startswith("merge "):   # merges aren't authored work
             continue
-        out.append(Commit(ts=ts, repo=c.get("repo", "?"), message=msg))
+        out.append(Commit(ts=ts, repo=c.get("repo", "?"), message=msg, kind=kind))
     out.sort(key=lambda x: x.ts)
     return out

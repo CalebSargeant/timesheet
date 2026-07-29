@@ -27,6 +27,8 @@ def _wb_trunc(s: str, n: int) -> str:
 
 
 def classify_focus(commits: list[Commit], cfg: Config) -> str:
+    if commits and all(c.kind == "review" for c in commits):
+        return cfg.review_project
     blob = " ".join(c.message.lower() for c in commits)
     for project, kws in cfg.focus_rules:
         if any(k in blob for k in kws):

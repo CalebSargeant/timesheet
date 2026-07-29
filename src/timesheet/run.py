@@ -39,20 +39,21 @@ def main(argv: list[str]) -> int:
     if llm:
         print(f"[run] AI summaries on ({cfg.llm_model})")
 
-    # Current week — always refreshed.
-    days = collect_week(week, cfg, llm=llm)
+    # Current week — always refreshed, with the full signal set (commits + reviews).
+    days = collect_week(week, cfg, llm=llm, full=True)
     monday = days[0].date.date() if days else _monday(week)
-    meta = store.save(monday, {}, days)
+    meta = store.save(monday, {}, days, full=True)
     print(f"[run] week {meta['week_start']}: {meta['total_hm']} across {meta['days']} days")
 
-    # Backfill recent weeks so month filters are fast. get_days is version-aware, so
-    # weeks left by older reconstruction logic count as a miss and get recomputed.
+    # Backfill recent weeks so month filters are fast. Recompute a week unless it's
+    # already cached at the current logic version AND with the full signal set — so
+    # weeks a page view warmed with the fast commit-only pass get upgraded here.
     for i in range(1, int(os.environ.get("BACKFILL_WEEKS", "6")) + 1):
         m = _monday(week) - timedelta(days=7 * i)
-        if store.get_days(m) is not None:
+        if store.is_full(m):
             continue
-        bd = collect_week(m, cfg, llm=llm)
-        store.save(m, {}, bd)
+        bd = collect_week(m, cfg, llm=llm, full=True)
+        store.save(m, {}, bd, full=True)
         print(f"[run] backfilled week {m.isoformat()}: {len(bd)} days")
 
     if want_email:

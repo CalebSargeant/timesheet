@@ -66,6 +66,21 @@ def test_day_opens_at_default_or_earlier_by_activity():
     assert d.blocks[0].start.strftime("%H:%M") == cfg.day_start   # 08:30
 
 
+def test_reviews_count_as_effort_and_are_labelled():
+    """A review-only day (no commits, no meetings) still reads as real work, and
+    the block is labelled Code review, not generic admin."""
+    cfg = Config()
+    tz = ZoneInfo(cfg.tz)
+    day = datetime(2026, 7, 20, tzinfo=tz)
+    reviews = [
+        Commit(ts=datetime(2026, 7, 20, 10, 0, tzinfo=tz), repo="infra", message="Fix ingress", kind="review"),
+        Commit(ts=datetime(2026, 7, 20, 10, 40, tzinfo=tz), repo="apps", message="Bump chart", kind="review"),
+    ]
+    d = reconstruct_day(day, [], reviews, cfg, tz)
+    assert d.minutes > 0
+    assert any(b.project == cfg.review_project for b in d.blocks), "no Code review block"
+
+
 def test_no_mega_blocks(week):
     """The bug in the first POC: a thin-meeting day rendered one 6h block."""
     days, cfg = week

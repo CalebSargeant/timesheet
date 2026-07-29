@@ -25,11 +25,11 @@ from ..render import xlsx as render_xlsx
 from ..timeutil import hm
 
 
-def _meta(days: list[Day], week_start: date, generated: datetime) -> dict:
+def _meta(days: list[Day], week_start: date, generated: datetime, full: bool = False) -> dict:
     total = sum(d.minutes for d in days)
     return {"week_start": week_start.isoformat(), "generated_at": generated.isoformat(),
             "total_minutes": total, "total_hm": hm(total), "days": len(days),
-            "logic_version": RECONSTRUCT_VERSION}
+            "logic_version": RECONSTRUCT_VERSION, "full": full}
 
 
 def _is_current(meta: dict | None) -> bool:
@@ -48,12 +48,16 @@ class FileStore:
     def _path(self, monday: date) -> Path:
         return self.dir / f"week-{monday.isoformat()}.json"
 
-    def save(self, week_start: date, payload: dict, days: list[Day]) -> dict:
-        meta = _meta(days, week_start, datetime.now(self.tz))
+    def save(self, week_start: date, payload: dict, days: list[Day], full: bool = False) -> dict:
+        meta = _meta(days, week_start, datetime.now(self.tz), full=full)
         self._path(week_start).write_text(json.dumps(
             {"meta": meta, "days": [d.to_dict() for d in days],
              "ingest": (payload or {})}))
         return meta
+
+    def _meta_of(self, monday: date) -> dict | None:
+        p = self._path(monday)
+        return json.loads(p.read_text()).get("meta") if p.exists() else None
 
     def get_days(self, monday: date) -> list[Day] | None:
         p = self._path(monday)
@@ -63,6 +67,10 @@ class FileStore:
         if not _is_current(doc.get("meta")):
             return None
         return [Day.from_dict(x) for x in doc["days"]]
+
+    def is_full(self, monday: date) -> bool:
+        m = self._meta_of(monday)
+        return _is_current(m) and bool(m.get("full"))
 
     def latest_meta(self) -> dict:
         metas = []
@@ -99,9 +107,9 @@ class PgStore:
         import psycopg
         return psycopg.connect(self.dsn, autocommit=True)
 
-    def save(self, week_start: date, payload: dict, days: list[Day]) -> dict:
+    def save(self, week_start: date, payload: dict, days: list[Day], full: bool = False) -> dict:
         gen = datetime.now(self.tz)
-        meta = _meta(days, week_start, gen)
+        meta = _meta(days, week_start, gen, full=full)
         # html/xlsx columns are NOT NULL from the original schema; keep populating
         # them (single-week render) even though the web now renders periods on demand.
         page = render_html.build_week(days, title=f"Uren week {week_start.isoformat()}")
@@ -132,6 +140,15 @@ class PgStore:
             return None
         raw = row[0] if isinstance(row[0], list) else json.loads(row[0])
         return [Day.from_dict(x) for x in raw]
+
+    def is_full(self, monday: date) -> bool:
+        with self._conn() as c:
+            row = c.execute("SELECT meta FROM timesheet_week WHERE week_start = %s",
+                            (monday,)).fetchone()
+        if not row or row[0] is None:
+            return False
+        meta = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+        return _is_current(meta) and bool(meta.get("full"))
 
     def latest_meta(self) -> dict:
         with self._conn() as c:

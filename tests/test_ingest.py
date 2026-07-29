@@ -69,6 +69,11 @@ def test_http_ingest_requires_token(monkeypatch):
     dl = client.get("/uren.xlsx")
     assert dl.status_code == 200 and dl.content[:2] == b"PK"
 
+    # /healthz must stay DB-free (regression: it opened a Postgres connection per
+    # probe, blew the 1s timeout, and crash-looped the pod). Exactly {"ok": True}.
+    assert client.get("/healthz").json() == {"ok": True}
+    assert client.get("/status").json()["week_start"] == "2026-07-20"
+
 
 @pytest.fixture(autouse=True)
 def _tmp_data(monkeypatch, tmp_path):

@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 from .config import Config
 from .model import Block, Commit, Day, Meeting
 from .summarize import classify_focus, summarize_block
-from .timeutil import Interval, free_intervals, mins, parse_hhmm, resolve_overlaps, snap, subtract
+from .timeutil import Interval, free_intervals, mins, parse_hhmm, resolve_overlaps, snap
 
 
 def _cluster(commits: list[Commit], gap_min: int) -> list[list[Commit]]:
@@ -51,15 +51,6 @@ def _split(iv: Interval, cap: int, step: int) -> list[Interval]:
     return out
 
 
-def _best_slot(free: list[Interval], want: Interval) -> Interval | None:
-    """Free interval overlapping `want`, else the nearest one starting after it."""
-    overlapping = [iv for iv in free if iv[0] < want[1] and iv[1] > want[0]]
-    if overlapping:
-        return max(overlapping, key=lambda iv: min(iv[1], want[1]) - max(iv[0], want[0]))
-    later = [iv for iv in free if iv[0] >= want[0]]
-    return min(later, key=lambda iv: iv[0]) if later else None
-
-
 def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commit],
                     cfg: Config, tz: ZoneInfo, llm=None) -> Day:
     start = date.replace(hour=parse_hhmm(cfg.day_start) // 60,
@@ -85,42 +76,39 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
                   max((b.end for b in anchors), default=start))
     free = free_intervals((start, day_end), [(b.start, b.end) for b in anchors])
 
-    # place commit sessions where they actually happened
+    # The day's GHE work themes: one per commit session (classified + summarised).
+    # Every session counts (incl. after-hours) — the point is to represent the work,
+    # not its exact clock time (the sheet is a normalised ~8h/day narrative).
     day_commits = [c for c in commits if c.ts.date() == date.date()]
-    sessions = _cluster(day_commits, cfg.session_gap_minutes)
-    focus: list[Block] = []
-    dropped = 0
-    for sess in sessions:
-        want = (snap(sess[0].ts, cfg.snap_minutes),
-                snap(sess[-1].ts, cfg.snap_minutes) + timedelta(minutes=cfg.min_block_minutes))
-        slot = _best_slot(free, want)
-        if slot is None or (cfg.include_after_hours is False and want[0] >= day_end):
-            dropped += 1
-            continue
-        b_start = max(slot[0], min(want[0], slot[1] - timedelta(minutes=cfg.min_block_minutes)))
-        b_start = max(b_start, slot[0])
-        length = max(cfg.min_block_minutes, mins(want))
-        b_end = min(slot[1], b_start + timedelta(minutes=length))
-        if mins((b_start, b_end)) < cfg.snap_minutes:
-            dropped += 1
-            continue
+    themes: list[tuple[str, str]] = []
+    for sess in _cluster(day_commits, cfg.session_gap_minutes):
         project = classify_focus(sess, cfg)
-        taak = summarize_block(sess, project, cfg, llm)
-        for piece in _split((b_start, b_end), cfg.max_focus_minutes, cfg.snap_minutes):
-            focus.append(Block(piece[0], piece[1], project, taak, "focus"))
-        free = subtract(free, (b_start, b_end))
+        themes.append((project, summarize_block(sess, project, cfg, llm)))
 
-    # fill whatever's left with admin, split into digestible chunks
-    admin: list[Block] = []
-    for iv in free:
-        if mins(iv) < cfg.snap_minutes:
-            continue
-        for piece in _split(iv, cfg.max_admin_minutes, cfg.snap_minutes):
-            if mins(piece) >= cfg.snap_minutes:
-                admin.append(Block(piece[0], piece[1], cfg.admin_project, cfg.admin_taak, "admin"))
+    # Fill the free workday time. When there IS GHE work that day, most of it is
+    # that work — labelled from the day's commit themes, cycled across the free
+    # chunks — with a single admin slice for realism on longer days. With no GHE
+    # activity it's all admin. This keeps the ~8h/day target while making the sheet
+    # reflect the actual GHE work instead of generic "Mail / GitHub / Teams".
+    chunks = [p for iv in free
+              for p in _split(iv, cfg.max_admin_minutes, cfg.snap_minutes)
+              if mins(p) >= cfg.snap_minutes]
+    fill: list[Block] = []
+    if themes:
+        admin_idx = len(chunks) - 1 if len(chunks) >= 3 else -1   # one admin slice, longer days
+        ti = 0
+        for i, (a, b) in enumerate(chunks):
+            if i == admin_idx:
+                fill.append(Block(a, b, cfg.admin_project, cfg.admin_taak, "admin"))
+            else:
+                project, taak = themes[ti % len(themes)]
+                ti += 1
+                fill.append(Block(a, b, project, taak, "focus"))
+    else:
+        fill = [Block(a, b, cfg.admin_project, cfg.admin_taak, "admin") for a, b in chunks]
 
-    blocks = sorted(anchors + focus + admin, key=lambda b: b.start)
-    return Day(date=date, blocks=blocks, dropped_after_hours=dropped)
+    blocks = sorted(anchors + fill, key=lambda b: b.start)
+    return Day(date=date, blocks=blocks, dropped_after_hours=0)
 
 
 def reconstruct_week(meetings: list[Meeting], commits: list[Commit],

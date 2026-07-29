@@ -32,7 +32,7 @@ class Config:
     # a prolific week isn't flattened to 40h. Floored so quiet days still read ~8h
     # ("40h on a slow week"); capped so a marathon day stays believable.
     min_day_minutes: int = 480                           # floor: a normal 8h day
-    max_day_minutes: int = 720                           # cap: 12h, a long-but-real day
+    max_day_minutes: int = 840                           # cap: 14h (Caleb's real long days run 08:30 past 21:30)
     admin_floor_minutes: int = 30                        # always a little admin
     session_gap_minutes: int = 120                       # git-hours: new session after a 2h gap
     first_commit_minutes: int = 120                      # git-hours: lead-in before the 1st commit
@@ -120,7 +120,7 @@ class Config:
             day_start=e.get("DAY_START", "08:30"),
             earliest_start_floor=e.get("EARLIEST_START_FLOOR", "06:00"),
             min_day_minutes=_i("MIN_DAY_MINUTES", 480),
-            max_day_minutes=_i("MAX_DAY_MINUTES", 720),
+            max_day_minutes=_i("MAX_DAY_MINUTES", 840),
             rota_enabled=_b("ROTA_ENABLED", False),
             rota_minutes=_i("ROTA_MINUTES", 75),
             include_after_hours=_b("INCLUDE_AFTER_HOURS", False),

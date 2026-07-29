@@ -18,6 +18,7 @@ from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from ..config import RECONSTRUCT_VERSION
 from ..model import Day
 from ..render import html as render_html
 from ..render import xlsx as render_xlsx
@@ -27,7 +28,15 @@ from ..timeutil import hm
 def _meta(days: list[Day], week_start: date, generated: datetime) -> dict:
     total = sum(d.minutes for d in days)
     return {"week_start": week_start.isoformat(), "generated_at": generated.isoformat(),
-            "total_minutes": total, "total_hm": hm(total), "days": len(days)}
+            "total_minutes": total, "total_hm": hm(total), "days": len(days),
+            "logic_version": RECONSTRUCT_VERSION}
+
+
+def _is_current(meta: dict | None) -> bool:
+    """A cached week is fresh only if it was built by the current reconstruction
+    logic. Anything older (or unstamped) is treated as a miss so a deploy quietly
+    recomputes it — no manual cache clearing after a logic change."""
+    return bool(meta) and meta.get("logic_version") == RECONSTRUCT_VERSION
 
 
 class FileStore:
@@ -50,7 +59,10 @@ class FileStore:
         p = self._path(monday)
         if not p.exists():
             return None
-        return [Day.from_dict(x) for x in json.loads(p.read_text())["days"]]
+        doc = json.loads(p.read_text())
+        if not _is_current(doc.get("meta")):
+            return None
+        return [Day.from_dict(x) for x in doc["days"]]
 
     def latest_meta(self) -> dict:
         metas = []
@@ -111,9 +123,12 @@ class PgStore:
 
     def get_days(self, monday: date) -> list[Day] | None:
         with self._conn() as c:
-            row = c.execute("SELECT days FROM timesheet_week WHERE week_start = %s",
+            row = c.execute("SELECT days, meta FROM timesheet_week WHERE week_start = %s",
                             (monday,)).fetchone()
         if not row or row[0] is None:
+            return None
+        meta = row[1] if isinstance(row[1], dict) else (json.loads(row[1]) if row[1] else None)
+        if not _is_current(meta):
             return None
         raw = row[0] if isinstance(row[0], list) else json.loads(row[0])
         return [Day.from_dict(x) for x in raw]

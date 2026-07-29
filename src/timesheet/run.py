@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .config import Config
+from .llm import make_llm
 from .pipeline import collect_week
 from .render import xlsx as render_xlsx
 from .service import email as mailer
@@ -32,19 +33,25 @@ def main(argv: list[str]) -> int:
     args = [a for a in argv[1:] if not a.startswith("--")]
     week = date.fromisoformat(args[0]) if args else datetime.now(ZoneInfo(cfg.tz)).date()
     store = make_store(tz=cfg.tz)
+    # AI label polish runs here in the background, if configured — never in a web
+    # request. Absent LITELLM_MODEL, this is None and summaries stay deterministic.
+    llm = make_llm(cfg)
+    if llm:
+        print(f"[run] AI summaries on ({cfg.llm_model})")
 
     # Current week — always refreshed.
-    days = collect_week(week, cfg)
+    days = collect_week(week, cfg, llm=llm)
     monday = days[0].date.date() if days else _monday(week)
     meta = store.save(monday, {}, days)
     print(f"[run] week {meta['week_start']}: {meta['total_hm']} across {meta['days']} days")
 
-    # Backfill recent weeks once (skip already-cached ones) so month filters are fast.
+    # Backfill recent weeks so month filters are fast. get_days is version-aware, so
+    # weeks left by older reconstruction logic count as a miss and get recomputed.
     for i in range(1, int(os.environ.get("BACKFILL_WEEKS", "6")) + 1):
         m = _monday(week) - timedelta(days=7 * i)
         if store.get_days(m) is not None:
             continue
-        bd = collect_week(m, cfg)
+        bd = collect_week(m, cfg, llm=llm)
         store.save(m, {}, bd)
         print(f"[run] backfilled week {m.isoformat()}: {len(bd)} days")
 

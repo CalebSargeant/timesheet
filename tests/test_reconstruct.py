@@ -2,7 +2,7 @@
 
 These are the properties that make a sheet defensible to a manager: the day is
 built from real anchors, nothing double-books, no unnatural mega-blocks, and the
-morning on-call + standup land where they really were."""
+calendar standup lands where it really was."""
 import json
 from datetime import datetime
 from pathlib import Path
@@ -60,11 +60,16 @@ def test_no_mega_blocks(week):
                 assert b.minutes <= cap, f"{b.kind} block {b.minutes}m on {d.date:%a}"
 
 
-def test_morning_is_oncall_and_standup_present(week):
-    days, cfg = week
+def test_no_template_rota(week):
+    """The example sheet's 07:30 'Checks en standby' was a placeholder, not real
+    work; rota is off by default so it must never appear."""
+    days, _ = week
     for d in days:
-        assert d.blocks[0].kind == "rota"
-        assert d.blocks[0].project == cfg.rota_project
+        assert all(b.kind != "rota" for b in d.blocks), f"phantom rota on {d.date:%a}"
+
+
+def test_standup_present(week):
+    days, cfg = week
     # every day that week had a daily standup in the real calendar
     for d in days:
         assert any(b.taak == cfg.standup_taak for b in d.blocks), f"no standup on {d.date:%a}"

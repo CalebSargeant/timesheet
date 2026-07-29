@@ -9,6 +9,12 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+# Bump whenever the reconstruction *logic* changes (day model, summariser, rota,
+# effort estimate). Cached weeks stamp this in their meta; the store treats a
+# mismatch as a cache miss, so a deploy auto-recomputes stale weeks — no manual
+# cache clearing. v2: dropped the template on-call rota; single-phrase summaries.
+RECONSTRUCT_VERSION = 2
+
 
 @dataclass(frozen=True)
 class Config:
@@ -33,8 +39,9 @@ class Config:
     max_admin_minutes: int = 90
     include_after_hours: bool = False                    # drop evening/weekend commit sessions
 
-    # Morning on-call / standby ("ochtenddienst"). Not calendared -> config.
-    rota_enabled: bool = True
+    # Morning on-call / standby ("ochtenddienst"). Off by default: it was only a
+    # placeholder in the example sheet, not real work. Toggle on per person if it is.
+    rota_enabled: bool = False
     rota_minutes: int = 75                               # 07:30–08:45 in the example
     rota_project: str = "Ochtenddienst"
     rota_taak: str = "Checks en standby"
@@ -61,17 +68,35 @@ class Config:
     admin_project: str = "Administratie"
     admin_taak: str = "Mail / GitHub / Teams"
 
+    # Optional AI label polish via the house LiteLLM proxy (OpenAI-compatible).
+    # Empty model => AI off and the deterministic summariser is used. Applied ONLY
+    # in the background refresh (run.py), never in a web request, because the
+    # proxy's models can take 10-20s per call.
+    llm_base_url: str = "https://litellm.sargeant.co"
+    llm_api_key: str = ""
+    llm_model: str = ""
+    llm_timeout: float = 30.0
+
+    @property
+    def llm_enabled(self) -> bool:
+        return bool(self.llm_api_key and self.llm_model)
+
     @staticmethod
     def from_env(env: dict | None = None) -> Config:
         e = env or os.environ
         def _b(k, d): return e.get(k, str(d)).lower() in ("1", "true", "yes", "on")
         def _i(k, d): return int(e.get(k, d))
+        def _f(k, d): return float(e.get(k, d))
         return Config(
             tz=e.get("TZ", "Europe/Amsterdam"),
             day_start=e.get("DAY_START", "07:30"),
             min_day_minutes=_i("MIN_DAY_MINUTES", 480),
             max_day_minutes=_i("MAX_DAY_MINUTES", 720),
-            rota_enabled=_b("ROTA_ENABLED", True),
+            rota_enabled=_b("ROTA_ENABLED", False),
             rota_minutes=_i("ROTA_MINUTES", 75),
             include_after_hours=_b("INCLUDE_AFTER_HOURS", False),
+            llm_base_url=e.get("LITELLM_BASE_URL", "https://litellm.sargeant.co"),
+            llm_api_key=e.get("LITELLM_API_KEY", ""),
+            llm_model=e.get("LITELLM_MODEL", ""),
+            llm_timeout=_f("LITELLM_TIMEOUT", 30.0),
         )

@@ -12,7 +12,8 @@ import pytest
 
 from timesheet.collectors import normalize_commits, normalize_meetings
 from timesheet.config import Config
-from timesheet.reconstruct import reconstruct_week
+from timesheet.model import Commit
+from timesheet.reconstruct import reconstruct_day, reconstruct_week
 from timesheet.render import html, xlsx
 
 FIXTURE = Path(__file__).parent / "fixtures" / "week_2026-07-20.json"
@@ -44,10 +45,25 @@ def test_no_overlaps_and_ordered(week):
 def test_blocks_within_workday_and_positive(week):
     days, cfg = week
     for d in days:
-        start = d.blocks[0].start
-        assert start.strftime("%H:%M") == cfg.day_start        # day opens at 07:30
+        start = d.blocks[0].start.strftime("%H:%M")
+        # opens at 08:30, or earlier if the day's activity shows it, never before the floor
+        assert cfg.earliest_start_floor <= start <= cfg.day_start, f"{d.date:%a} opens {start}"
         for b in d.blocks:
             assert b.minutes > 0
+
+
+def test_day_opens_at_default_or_earlier_by_activity():
+    cfg = Config()
+    tz = ZoneInfo(cfg.tz)
+    day = datetime(2026, 7, 20, tzinfo=tz)
+    # an early commit pulls the start back to when work actually began
+    early = [Commit(ts=datetime(2026, 7, 20, 7, 40, tzinfo=tz), repo="r", message="fix: vroeg")]
+    d = reconstruct_day(day, [], early, cfg, tz)
+    assert d.blocks[0].start.strftime("%H:%M") == "07:40"
+    # a late-only day still opens at the normal 08:30, not at the commit time
+    late = [Commit(ts=datetime(2026, 7, 20, 11, 0, tzinfo=tz), repo="r", message="fix: laat")]
+    d = reconstruct_day(day, [], late, cfg, tz)
+    assert d.blocks[0].start.strftime("%H:%M") == cfg.day_start   # 08:30
 
 
 def test_no_mega_blocks(week):

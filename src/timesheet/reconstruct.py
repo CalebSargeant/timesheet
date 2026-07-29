@@ -67,10 +67,21 @@ def _git_hours(commits: list[Commit], gap_min: int, lead_min: int) -> float:
     return seconds / 3600.0
 
 
+def _at(day: datetime, hhmm: str) -> datetime:
+    return day.replace(hour=parse_hhmm(hhmm) // 60, minute=parse_hhmm(hhmm) % 60,
+                       second=0, microsecond=0)
+
+
 def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commit],
                     cfg: Config, tz: ZoneInfo, llm=None) -> Day:
-    start = date.replace(hour=parse_hhmm(cfg.day_start) // 60,
-                         minute=parse_hhmm(cfg.day_start) % 60, second=0, microsecond=0)
+    day_commits = [c for c in commits if c.ts.date() == date.date()]
+    # Start at the configured hour (08:30), but open earlier if the day's own
+    # activity — an early commit or a meeting — proves work began sooner. Never
+    # before the floor, so a stray late-night commit can't drag the day open.
+    default_start = _at(date, cfg.day_start)
+    earliest = min([c.ts for c in day_commits] + [m.start for m in meetings],
+                   default=default_start)
+    start = min(default_start, max(earliest, _at(date, cfg.earliest_start_floor)))
 
     fixed: list[tuple[Interval, str, str, str]] = []   # (interval, project, taak, kind)
     if cfg.rota_enabled:
@@ -92,7 +103,6 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
     # time (git-hours of the day's commits) + a little admin, floored to a normal day
     # and capped so a marathon day stays believable. A heavy coding day shows well
     # over 8h, so a prolific week is not flattened to 40h.
-    day_commits = [c for c in commits if c.ts.date() == date.date()]
     coding_min = _git_hours(day_commits, cfg.session_gap_minutes, cfg.first_commit_minutes) * 60.0
     fixed_min = sum(b.minutes for b in anchors)
     target = min(max(int(fixed_min + coding_min + cfg.admin_floor_minutes),

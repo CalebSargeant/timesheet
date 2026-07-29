@@ -13,14 +13,16 @@ from dataclasses import dataclass
 # effort estimate). Cached weeks stamp this in their meta; the store treats a
 # mismatch as a cache miss, so a deploy auto-recomputes stale weeks — no manual
 # cache clearing. v2: dropped the template on-call rota; single-phrase summaries.
-RECONSTRUCT_VERSION = 2
+# v3: 08:30 day start (earlier only if the day's activity says so).
+RECONSTRUCT_VERSION = 3
 
 
 @dataclass(frozen=True)
 class Config:
     tz: str = "Europe/Amsterdam"
     workdays: tuple[int, ...] = (0, 1, 2, 3, 4)          # Mon-Fri
-    day_start: str = "07:30"
+    day_start: str = "08:30"                             # normal start; earlier only if activity shows it
+    earliest_start_floor: str = "06:00"                  # but never open the day before this
     snap_minutes: int = 15                               # round edges to :00/:15/:30/:45
 
     # The day length is DRIVEN by estimated effort (git-hours of the day's commits)
@@ -76,6 +78,9 @@ class Config:
     llm_api_key: str = ""
     llm_model: str = ""
     llm_timeout: float = 30.0
+    # deepseek-v4-flash is a reasoning model: "low" keeps a one-line label to ~3.6s
+    # (vs 5-20s). Blank if a model rejects the field. Sent only when non-empty.
+    llm_reasoning_effort: str = "low"
 
     @property
     def llm_enabled(self) -> bool:
@@ -89,7 +94,8 @@ class Config:
         def _f(k, d): return float(e.get(k, d))
         return Config(
             tz=e.get("TZ", "Europe/Amsterdam"),
-            day_start=e.get("DAY_START", "07:30"),
+            day_start=e.get("DAY_START", "08:30"),
+            earliest_start_floor=e.get("EARLIEST_START_FLOOR", "06:00"),
             min_day_minutes=_i("MIN_DAY_MINUTES", 480),
             max_day_minutes=_i("MAX_DAY_MINUTES", 720),
             rota_enabled=_b("ROTA_ENABLED", False),
@@ -99,4 +105,5 @@ class Config:
             llm_api_key=e.get("LITELLM_API_KEY", ""),
             llm_model=e.get("LITELLM_MODEL", ""),
             llm_timeout=_f("LITELLM_TIMEOUT", 30.0),
+            llm_reasoning_effort=e.get("LITELLM_REASONING_EFFORT", "low"),
         )

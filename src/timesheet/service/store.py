@@ -92,7 +92,7 @@ class PgStore:
         meta = _meta(days, week_start, gen)
         # html/xlsx columns are NOT NULL from the original schema; keep populating
         # them (single-week render) even though the web now renders periods on demand.
-        page = render_html.build_week(days, title=f"Uren — week {week_start.isoformat()}")
+        page = render_html.build_week(days, title=f"Uren week {week_start.isoformat()}")
         data = render_xlsx.build_week(days)
         days_json = json.dumps([d.to_dict() for d in days])
         with self._conn() as c:

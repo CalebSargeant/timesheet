@@ -8,7 +8,7 @@ from ..model import Day
 from ..timeutil import NL_DAYS, NL_MONTHS, hm
 
 
-def build_week(week: list[Day], *, title: str = "Uren — Team Cloud",
+def build_week(week: list[Day], *, title: str = "Uren · Team Cloud",
                download_url: str | None = None, generated: str | None = None,
                subtitle: str | None = None, nav_html: str = "") -> str:
     rows, grand = [], 0
@@ -52,6 +52,12 @@ def build_week(week: list[Day], *, title: str = "Uren — Team Cloud",
    border-radius:999px}}
  .pill.active{{background:#374151;color:#fff;border-color:#374151}}
  @media(prefers-color-scheme:dark){{.pill.active{{background:#c7d2fe;color:#1e3a8a;border-color:#c7d2fe}}}}
+ .range{{display:inline-flex;align-items:center;gap:6px;margin-left:auto}}
+ .range input[type=date]{{font:inherit;padding:4px 8px;border:1px solid #8884;border-radius:8px;
+   background:Canvas;color:inherit}}
+ .range .sep{{opacity:.6;font-size:12px}}
+ .pill.go{{cursor:pointer;background:#374151;color:#fff;border-color:#374151}}
+ @media(prefers-color-scheme:dark){{.pill.go{{background:#c7d2fe;color:#1e3a8a;border-color:#c7d2fe}}}}
  .gen{{font-size:12px;opacity:.6}}
  .btn{{font-size:13px;text-decoration:none;padding:6px 12px;border:1px solid #8884;border-radius:8px;
    color:inherit}}

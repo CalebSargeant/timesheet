@@ -32,6 +32,17 @@ def test_unknown_key_defaults_to_this_week():
     assert resolve_period("bogus", WED).key == "this-week"
 
 
+def test_custom_period_and_parse():
+    from timesheet.periods import custom_period, parse_date
+
+    p = custom_period(date(2026, 7, 1), date(2026, 7, 15))
+    assert (p.key, p.start, p.end, p.is_month) == ("custom", date(2026, 7, 1), date(2026, 7, 15), True)
+    rev = custom_period(date(2026, 7, 15), date(2026, 7, 1))   # reversed -> normalized
+    assert (rev.start, rev.end) == (date(2026, 7, 1), date(2026, 7, 15))
+    assert parse_date("2026-07-01") == date(2026, 7, 1)
+    assert parse_date("nope") is None and parse_date(None) is None
+
+
 def test_mondays_covering_month():
     ms = mondays_covering(date(2026, 7, 1), date(2026, 7, 31))
     assert ms[0] == date(2026, 6, 29) and date(2026, 7, 27) in ms and len(ms) == 5

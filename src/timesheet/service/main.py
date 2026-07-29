@@ -21,7 +21,14 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from ..config import Config
 from ..model import Day
-from ..periods import PERIOD_KEYS, Period, mondays_covering, resolve_period
+from ..periods import (
+    PERIOD_KEYS,
+    Period,
+    custom_period,
+    mondays_covering,
+    parse_date,
+    resolve_period,
+)
 from ..pipeline import build_from_ingest, collect_week
 from ..render import html as render_html
 from ..render import xlsx as render_xlsx
@@ -62,20 +69,36 @@ def _period_days(period: Period) -> list[Day]:
     return out
 
 
-def _nav_html(active: str) -> str:
+def _resolve(period: str, frm: str | None, to: str | None) -> Period:
+    f, t = parse_date(frm), parse_date(to)
+    if f and t:
+        return custom_period(f, t)
+    return resolve_period(period, _today())
+
+
+def _nav_html(active: str, start, end) -> str:
     today = _today()
-    return "".join(
+    pills = "".join(
         f'<a class="{"pill active" if k == active else "pill"}" href="/?period={k}">'
         f'{resolve_period(k, today).label}</a>'
         for k in PERIOD_KEYS
     )
+    form = (
+        '<form class="range" method="get" action="/">'
+        f'<input type="date" name="from" value="{start.isoformat()}">'
+        '<span class="sep">tot</span>'
+        f'<input type="date" name="to" value="{end.isoformat()}">'
+        '<button class="pill go" type="submit">Toon</button>'
+        '</form>'
+    )
+    return pills + form
 
 
 def _subtitle(period: Period, days: list[Day]) -> str:
     if not days:
         return period.label
     a, b = days[0].date, days[-1].date
-    return f"{period.label} · {a.day:02d}-{a.month:02d} – {b.day:02d}-{b.month:02d}"
+    return f"{period.label} · {a.day:02d}-{a.month:02d} tot {b.day:02d}-{b.month:02d}"
 
 
 def _last_updated() -> str | None:
@@ -84,12 +107,17 @@ def _last_updated() -> str | None:
 
 
 @app.get("/", response_class=HTMLResponse)
-def index(period: str = Query(default="this-week")):
-    p = resolve_period(period, _today())
+def index(period: str = Query(default="this-week"),
+          frm: str | None = Query(default=None, alias="from"),
+          to: str | None = Query(default=None)):
+    p = _resolve(period, frm, to)
     days = _period_days(p)
+    dl = (f"uren.xlsx?from={p.start.isoformat()}&to={p.end.isoformat()}"
+          if p.key == "custom" else f"uren.xlsx?period={p.key}")
+    active = p.key if p.key in PERIOD_KEYS else ""
     return HTMLResponse(render_html.build_week(
-        days, title="Uren — Team Cloud", subtitle=_subtitle(p, days),
-        download_url=f"uren.xlsx?period={p.key}", nav_html=_nav_html(p.key),
+        days, title="Uren · Team Cloud", subtitle=_subtitle(p, days),
+        download_url=dl, nav_html=_nav_html(active, p.start, p.end),
         generated=_last_updated()))
 
 
@@ -103,15 +131,19 @@ def _period_xlsx(period: Period) -> Response:
 
 
 @app.get("/uren.xlsx")
-def download(period: str = Query(default="this-week")):
-    return _period_xlsx(resolve_period(period, _today()))
+def download(period: str = Query(default="this-week"),
+             frm: str | None = Query(default=None, alias="from"),
+             to: str | None = Query(default=None)):
+    return _period_xlsx(_resolve(period, frm, to))
 
 
 @app.get("/d/{token}/uren.xlsx")
-def signed_download(token: str, period: str = Query(default="this-week")):
+def signed_download(token: str, period: str = Query(default="this-week"),
+                    frm: str | None = Query(default=None, alias="from"),
+                    to: str | None = Query(default=None)):
     if not security.verify_download("uren.xlsx", token):
         raise HTTPException(status_code=403, detail="link expired or invalid")
-    return _period_xlsx(resolve_period(period, _today()))
+    return _period_xlsx(_resolve(period, frm, to))
 
 
 @app.post("/api/ingest")

@@ -25,7 +25,7 @@ def send_weekly(xlsx: bytes, meta: dict, *, public_url: str | None = None) -> bo
     url = public_url or os.environ.get("PUBLIC_URL", "https://uren.calebsargeant.com")
 
     msg = EmailMessage()
-    msg["Subject"] = f"Urenstaat week {week} — {total}"
+    msg["Subject"] = f"Urenstaat week {week} ({total})"
     msg["From"] = frm
     msg["To"] = to
     msg.set_content(

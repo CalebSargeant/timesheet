@@ -43,6 +43,6 @@ def test_email_builds_and_sends_via_fake_smtp(monkeypatch):
 
     ok = mailer.send_weekly(b"PK\x03\x04data", {"week_start": "2026-07-20", "total_minutes": 2400})
     assert ok is True
-    assert sent["subject"] == "Urenstaat week 2026-07-20 — 40:00"
+    assert sent["subject"] == "Urenstaat week 2026-07-20 (40:00)"
     assert sent["to"] == "marc.vergunst@pinkroccade.nl"
     assert sent["has_xlsx"] and sent["starttls"] and sent["login"] == ("caleb", "pw")

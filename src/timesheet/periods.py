@@ -55,9 +55,26 @@ def resolve_period(key: str | None, today: date) -> Period:
 
 
 def mondays_covering(start: date, end: date) -> list[date]:
-    """Mondays of every Mon–Sun week that overlaps [start, end]."""
+    """Mondays of every Mon..Sun week that overlaps [start, end]."""
     m, out = _monday(start), []
     while m <= end:
         out.append(m)
         m += timedelta(days=7)
     return out
+
+
+def parse_date(s: str | None) -> date | None:
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s.strip())
+    except (ValueError, AttributeError):
+        return None
+
+
+def custom_period(start: date, end: date) -> Period:
+    """An explicit start/end range chosen with the date pickers."""
+    if end < start:
+        start, end = end, start
+    label = f"{start.isoformat()} tot {end.isoformat()}"
+    return Period("custom", label, start, end, is_month=(end - start).days > 6)

@@ -69,8 +69,14 @@ def test_http_ingest_requires_token(monkeypatch):
 
     page = client.get("/")
     assert page.status_code == 200 and "TOTAAL" in page.text
-    # the date-filter nav is present (this/last week, this/last month)
+    # the date-filter nav is present (this/last week, this/last month) + custom range
     assert "?period=last-week" in page.text and "Deze week" in page.text
+    assert 'type="date"' in page.text and 'name="from"' in page.text
+    assert "—" not in page.text and "–" not in page.text   # no em/en dashes
+
+    # explicit custom range still renders the ingested week
+    custom = client.get("/?from=2026-07-20&to=2026-07-24")
+    assert custom.status_code == 200 and "TOTAAL" in custom.text
     dl = client.get("/uren.xlsx")
     assert dl.status_code == 200 and dl.content[:2] == b"PK"
 

@@ -33,6 +33,15 @@ class Block:
     def minutes(self) -> int:
         return int((self.end - self.start).total_seconds() // 60)
 
+    def to_dict(self) -> dict:
+        return {"start": self.start.isoformat(), "end": self.end.isoformat(),
+                "project": self.project, "taak": self.taak, "kind": self.kind}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Block:
+        return cls(datetime.fromisoformat(d["start"]), datetime.fromisoformat(d["end"]),
+                   d["project"], d["taak"], d.get("kind", "focus"))
+
 
 @dataclass
 class Day:
@@ -43,3 +52,13 @@ class Day:
     @property
     def minutes(self) -> int:
         return sum(b.minutes for b in self.blocks)
+
+    def to_dict(self) -> dict:
+        return {"date": self.date.isoformat(), "blocks": [b.to_dict() for b in self.blocks],
+                "dropped_after_hours": self.dropped_after_hours}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Day:
+        return cls(datetime.fromisoformat(d["date"]),
+                   [Block.from_dict(b) for b in d["blocks"]],
+                   d.get("dropped_after_hours", 0))

@@ -1,6 +1,7 @@
 """The Power Automate ingest path: pushed calendar/email/Teams + server-side
 commits -> reconstructed week, and the HTTP surface (auth, view, download)."""
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -56,6 +57,8 @@ def test_http_ingest_requires_token(monkeypatch):
 
     from timesheet.service import main
     importlib.reload(main)
+    # pin "today" into the ingested week so /?period=this-week resolves to it
+    monkeypatch.setattr(main, "_today", lambda: date(2026, 7, 22))
     client = TestClient(main.app)
 
     assert client.post("/api/ingest", json=_payload()).status_code == 401
@@ -66,6 +69,8 @@ def test_http_ingest_requires_token(monkeypatch):
 
     page = client.get("/")
     assert page.status_code == 200 and "TOTAAL" in page.text
+    # the date-filter nav is present (this/last week, this/last month)
+    assert "?period=last-week" in page.text and "Deze week" in page.text
     dl = client.get("/uren.xlsx")
     assert dl.status_code == 200 and dl.content[:2] == b"PK"
 

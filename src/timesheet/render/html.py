@@ -9,7 +9,8 @@ from ..timeutil import NL_DAYS, NL_MONTHS, hm
 
 
 def build_week(week: list[Day], *, title: str = "Uren — Team Cloud",
-               download_url: str | None = None, generated: str | None = None) -> str:
+               download_url: str | None = None, generated: str | None = None,
+               subtitle: str | None = None, nav_html: str = "") -> str:
     rows, grand = [], 0
     for day in week:
         grand += day.minutes
@@ -26,6 +27,11 @@ def build_week(week: list[Day], *, title: str = "Uren — Team Cloud",
     dl = (f'<a class="btn" href="{_html.escape(download_url)}">⬇ Download .xlsx</a>'
           if download_url else "")
     gen = f'<span class="gen">bijgewerkt {_html.escape(generated)}</span>' if generated else ""
+    sub = f'<div class="sub">{_html.escape(subtitle)}</div>' if subtitle else ""
+    nav = f'<nav class="periods">{nav_html}</nav>' if nav_html else ""
+    empty = ("" if rows else
+             '<tr><td colspan="6" style="padding:28px;text-align:center;opacity:.6">'
+             'Geen gegevens voor deze periode.</td></tr>')
     return f"""<!doctype html><html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{_html.escape(title)}</title>
@@ -38,7 +44,14 @@ def build_week(week: list[Day], *, title: str = "Uren — Team Cloud",
  .card{{max-width:940px;margin:0 auto;background:Canvas;border:1px solid #8883;border-radius:14px;
    overflow:hidden}}
  header{{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid #8883}}
- header h1{{font-size:17px;margin:0;flex:1}}
+ header .titles{{flex:1}}
+ header h1{{font-size:17px;margin:0}}
+ .sub{{font-size:12px;opacity:.65;margin-top:2px}}
+ .periods{{display:flex;gap:6px;flex-wrap:wrap;padding:10px 20px;border-bottom:1px solid #8883}}
+ .pill{{font-size:12.5px;text-decoration:none;color:inherit;padding:5px 11px;border:1px solid #8884;
+   border-radius:999px}}
+ .pill.active{{background:#374151;color:#fff;border-color:#374151}}
+ @media(prefers-color-scheme:dark){{.pill.active{{background:#c7d2fe;color:#1e3a8a;border-color:#c7d2fe}}}}
  .gen{{font-size:12px;opacity:.6}}
  .btn{{font-size:13px;text-decoration:none;padding:6px 12px;border:1px solid #8884;border-radius:8px;
    color:inherit}}
@@ -55,10 +68,11 @@ def build_week(week: list[Day], *, title: str = "Uren — Team Cloud",
  tfoot td{{font-weight:700}}
 </style></head><body>
 <div class="card">
- <header><h1>🕑 {_html.escape(title)}</h1>{gen}{dl}</header>
+ <header><div class="titles"><h1>🕑 {_html.escape(title)}</h1>{sub}</div>{gen}{dl}</header>
+ {nav}
  <table>
   <thead><tr><td>Datum</td><td>Van</td><td>Tot</td><td>Duur</td><td>Project / klant</td><td>Taak</td></tr></thead>
-  <tbody>{''.join(rows)}</tbody>
+  <tbody>{''.join(rows)}{empty}</tbody>
   <tfoot><tr><td colspan="3">TOTAAL</td><td colspan="3">{hm(grand)}</td></tr></tfoot>
  </table>
 </div></body></html>"""

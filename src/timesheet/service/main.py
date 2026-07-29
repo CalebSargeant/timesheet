@@ -73,4 +73,15 @@ def signed_download(token: str):
 
 @app.get("/healthz")
 def healthz():
+    # Liveness/readiness: cheap and DB-free. latest_meta() opens a fresh Postgres
+    # connection per call — that blew the 1s probe timeout ("context deadline
+    # exceeded") and crash-looped the pod. Keep this a pure "process is alive"
+    # check; the last-generated metadata is shown on the page and /status.
+    return {"ok": True}
+
+
+@app.get("/status")
+def status():
+    # Human/debug view of the last successful refresh (opens a DB connection —
+    # deliberately NOT what the k8s probes hit).
     return {"ok": True, **_store.latest_meta()}

@@ -26,17 +26,18 @@ ingress:
 # Non-secret runtime config -> ConfigMap.
 config:
   tz: Europe/Amsterdam
-  dayStart: "07:30"
+  dayStart: "08:30"           # normal start; opens earlier only if a commit/meeting shows it
   # Day length is effort-driven (git-hours + meetings), floored to 8h and capped
   # at 12h in code (MIN_DAY_MINUTES / MAX_DAY_MINUTES); no flat target.
   rotaEnabled: false          # the example sheet's 07:30 "Checks en standby" was a placeholder
   rotaMinutes: 75
   includeAfterHours: false
-  # Optional AI label polish via the house LiteLLM proxy. model:"" => off
-  # (deterministic summaries). "deepseek-v4-flash" turns it on in the nightly refresh.
+  # AI label polish via the house LiteLLM proxy, in the nightly refresh only.
+  # deepseek-v4-flash is a reasoning model; reasoningEffort=low keeps it ~3.6s/call.
   llm:
     baseUrl: https://litellm.sargeant.co
-    model: ""
+    model: "deepseek-v4-flash"
+    reasoningEffort: "low"
   publicUrl: https://uren.calebsargeant.com
   downloadTtlSeconds: 604800
   ghe:

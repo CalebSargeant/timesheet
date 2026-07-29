@@ -33,16 +33,20 @@ def make_llm(cfg: Config):
     base = cfg.llm_base_url.rstrip("/")
     url = f"{base}/v1/chat/completions"
     key, model, timeout = cfg.llm_api_key, cfg.llm_model, cfg.llm_timeout
+    effort = cfg.llm_reasoning_effort
 
     def _call(prompt: str) -> str:
-        body = json.dumps({
+        payload = {
             "model": model,
             "temperature": 0.2,
             "messages": [
                 {"role": "system", "content": _SYSTEM},
                 {"role": "user", "content": prompt},
             ],
-        }).encode()
+        }
+        if effort:  # reasoning models (deepseek-v4-*): "low" keeps a label fast/cheap
+            payload["reasoning_effort"] = effort
+        body = json.dumps(payload).encode()
         req = urllib.request.Request(url, data=body, headers={
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",

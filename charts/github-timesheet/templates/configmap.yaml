@@ -17,6 +17,7 @@ data:
   # from the -env Secret (LITELLM_API_KEY), not here.
   LITELLM_BASE_URL: {{ .Values.config.llm.baseUrl | quote }}
   LITELLM_MODEL: {{ .Values.config.llm.model | quote }}
+  LITELLM_REASONING_EFFORT: {{ .Values.config.llm.reasoningEffort | default "low" | quote }}
   PUBLIC_URL: {{ .Values.config.publicUrl | quote }}
   DOWNLOAD_TTL_SECONDS: {{ .Values.config.downloadTtlSeconds | quote }}
   GHE_HOST: {{ .Values.config.ghe.host | quote }}

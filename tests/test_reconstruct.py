@@ -81,6 +81,28 @@ def test_reviews_count_as_effort_and_are_labelled():
     assert any(b.project == cfg.review_project for b in d.blocks), "no Code review block"
 
 
+def test_prs_and_issues_show_as_labelled_work():
+    """A day of PRs opened / issues filed (few commits) reads as real work, not admin."""
+    cfg = Config()
+    tz = ZoneInfo(cfg.tz)
+    day = datetime(2026, 7, 22, tzinfo=tz)
+    events = [
+        Commit(ts=datetime(2026, 7, 22, 9, 0, tzinfo=tz), repo="infra", message="Upgrade ESO", kind="pr"),
+        Commit(ts=datetime(2026, 7, 22, 13, 0, tzinfo=tz), repo="infra", message="Fix ingress VIP", kind="issue"),
+    ]
+    d = reconstruct_day(day, [], events, cfg, tz)
+    projects = {b.project for b in d.blocks}
+    assert cfg.pr_project in projects or cfg.issue_project in projects
+
+
+def test_admin_labels_vary_so_quiet_days_are_not_identical():
+    cfg = Config()
+    tz = ZoneInfo(cfg.tz)
+    d = reconstruct_day(datetime(2026, 7, 24, tzinfo=tz), [], [], cfg, tz)
+    admin_taaks = {b.taak for b in d.blocks if b.kind == "admin"}
+    assert len(admin_taaks) >= 2, "a quiet day still renders a column of identical admin rows"
+
+
 def test_no_mega_blocks(week):
     """The bug in the first POC: a thin-meeting day rendered one 6h block."""
     days, cfg = week

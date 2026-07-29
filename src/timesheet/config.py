@@ -15,7 +15,8 @@ from dataclasses import dataclass
 # cache clearing. v2: dropped the template on-call rota; single-phrase summaries.
 # v3: 08:30 day start (earlier only if the day's activity says so).
 # v4: PR reviews count as effort (background refresh), not just commits.
-RECONSTRUCT_VERSION = 4
+# v5: PRs opened + issues authored count too; varied admin labels.
+RECONSTRUCT_VERSION = 5
 
 
 @dataclass(frozen=True)
@@ -70,15 +71,27 @@ class Config:
     focus_default_project: str = "Development"
     admin_project: str = "Administratie"
     admin_taak: str = "Mail / GitHub / Teams"
+    # Admin/leftover fill rotates through these so quiet days don't render as a column
+    # of identical rows. All are honestly-generic components of a normal workday.
+    admin_taaks: tuple[str, ...] = (
+        "Mail / GitHub / Teams", "Administratie", "Afstemming / overleg",
+        "Documentatie / kennisdeling",
+    )
 
-    # PR reviews as effort (senior work that leaves no default-branch commit). Pulled
-    # in the background refresh only (per-PR REST calls are too heavy for a page view).
-    # Credited per distinct PR reviewed (NOT via the commit git-hours lead-in, which
-    # would over-count), capped per day so a review-heavy day stays believable.
+    # GitHub work that leaves no default-branch commit — reviews (senior work),
+    # plus PRs opened and issues authored. Credited per item (NOT via the commit
+    # git-hours lead-in, which would over-count a point event), capped per day so a
+    # busy-but-not-coding day stays believable. Reviews need a per-PR REST fan-out so
+    # they run in the background refresh only; PRs/issues are one search each (fast).
     include_reviews: bool = True
+    include_authored: bool = True
     review_project: str = "Code review"
-    review_minutes_each: int = 12                        # ~12 min of effort per PR reviewed
-    review_cap_minutes: int = 180                        # at most 3h/day of review credit
+    pr_project: str = "Pull requests"
+    issue_project: str = "Issues / tickets"
+    review_minutes_each: int = 12
+    pr_minutes_each: int = 6
+    issue_minutes_each: int = 6
+    noncommit_cap_minutes: int = 240                     # at most 4h/day of review+PR+issue credit
 
     # Optional AI label polish via the house LiteLLM proxy (OpenAI-compatible).
     # Empty model => AI off and the deterministic summariser is used. Applied ONLY
@@ -112,6 +125,7 @@ class Config:
             rota_minutes=_i("ROTA_MINUTES", 75),
             include_after_hours=_b("INCLUDE_AFTER_HOURS", False),
             include_reviews=_b("INCLUDE_REVIEWS", True),
+            include_authored=_b("INCLUDE_AUTHORED", True),
             llm_base_url=e.get("LITELLM_BASE_URL", "https://litellm.sargeant.co"),
             llm_api_key=e.get("LITELLM_API_KEY", ""),
             llm_model=e.get("LITELLM_MODEL", ""),

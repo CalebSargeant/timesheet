@@ -90,11 +90,17 @@ def collect_week(week_start: date, cfg: Config, llm=None, *, full: bool = False)
     since = monday.isoformat()
     until = (monday + timedelta(days=6)).isoformat()
     raw_commits = ghe.fetch_commits(since, until)
-    if full and cfg.include_reviews:
+    if cfg.include_authored:   # PRs opened + issues authored: one search each, cheap enough for web
+        from .collectors import ghe_authored
+        try:
+            raw_commits = raw_commits + ghe_authored.fetch_authored(since, until)
+        except Exception:  # noqa: BLE001, S110 — a bonus signal, never block the week
+            pass
+    if full and cfg.include_reviews:   # reviews: per-PR REST fan-out, background refresh only
         from .collectors import ghe_reviews
         try:
             raw_commits = raw_commits + ghe_reviews.fetch_reviews(since, until)
-        except Exception:  # noqa: BLE001, S110 — reviews are a bonus signal, never block the week
+        except Exception:  # noqa: BLE001, S110 — a bonus signal, never block the week
             pass
 
     return build_week(monday, raw_meetings, raw_commits, cfg, llm)

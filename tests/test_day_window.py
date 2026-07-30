@@ -4,7 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from timesheet.config import Config
-from timesheet.model import Commit
+from timesheet.model import Commit, Meeting
 from timesheet.reconstruct import reconstruct_week
 
 TZ = ZoneInfo("Europe/Amsterdam")
@@ -29,7 +29,10 @@ def test_future_days_are_not_shown():
 def test_today_is_capped_at_now():
     commits = [_c(datetime(2026, 7, 29, 9, 0, tzinfo=TZ))]
     now = datetime(2026, 7, 29, 11, 0, tzinfo=TZ)
-    days = reconstruct_week([], commits, WEEK, Config(), now=now)
+    future_meeting_start = datetime(2026, 7, 29, 10, 30, tzinfo=TZ)
+    future_meeting_end = datetime(2026, 7, 29, 12, 0, tzinfo=TZ)
+    meetings = [Meeting(future_meeting_start, future_meeting_end, "proj", "standup")]
+    days = reconstruct_week(meetings, commits, WEEK, Config(), now=now)
     today = next(d for d in days if d.date.date().isoformat() == "2026-07-29")
     assert max(b.end for b in today.blocks) <= now                        # nothing past now
 

@@ -1,15 +1,15 @@
 """Turn normalized signals into a believable day of timesheet blocks.
 
 Algorithm (all deterministic):
-  1. Fixed anchors  = morning on-call rota + calendar meetings (overlaps trimmed).
-  2. Free time      = the workday window [07:30, 07:30+target] minus the anchors.
-  3. Focus blocks   = commit sessions (git-hours clustering) dropped into the free
-                      slot *nearest when they actually happened*, labelled from
-                      their commit content. Long blocks are split.
-  4. Admin fill     = any leftover free time -> 'Administratie / Mail·GitHub·Teams',
-                      split into <=90m chunks so nothing looks like a 6h monolith.
-Sessions that fall outside the workday (late-evening commits) are dropped by
-default and only counted, matching how the sheet is kept by hand.
+  1. Fixed anchors  = calendar meetings (overlaps trimmed); optional on-call rota.
+  2. Day length     = git-hours of commits + capped credit for reviews/PRs/issues,
+                      floored to 8h on core days and capped so long days stay real.
+  3. Free time      = the workday window [start, start+length] minus the anchors.
+  4. Focus blocks   = activity sessions (commits/PRs/issues/reviews), clustered per
+                      kind and labelled from their content; leftover time is admin.
+The day opens at 08:30 (earlier if activity shows it). Work past midnight rolls back
+to the day it started (day_rollover_hour). The in-progress day is capped at 'now',
+and days that haven't happened yet are not emitted (see reconstruct_week).
 """
 from __future__ import annotations
 
@@ -72,9 +72,26 @@ def _at(day: datetime, hhmm: str) -> datetime:
                        second=0, microsecond=0)
 
 
+def logical_date(dt: datetime, rollover_hour: int):
+    """The work-day an event belongs to: activity before `rollover_hour` counts as
+    the previous day, so 01:00 work is credited to the night before, not a phantom
+    early start the next morning."""
+    return (dt - timedelta(hours=rollover_hour)).date()
+
+
 def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commit],
-                    cfg: Config, tz: ZoneInfo, llm=None) -> Day:
-    day_events = [c for c in commits if c.ts.date() == date.date()]
+                    cfg: Config, tz: ZoneInfo, llm=None, *,
+                    now: datetime | None = None, floor: int | None = None) -> Day:
+    # `commits`/`meetings` are already bucketed to this work-day by the caller.
+    # `now` (set only for the in-progress day) caps the day so nothing past the
+    # current moment is shown. `floor` is the day's minimum length (8h on core days,
+    # 0 on weekends so a Saturday shows real effort, not a padded 8h).
+    if floor is None:
+        floor = cfg.min_day_minutes
+    if now is not None:                          # today: drop/clip anything after now
+        meetings = [Meeting(m.start, min(m.end, now), m.project, m.taak)
+                    for m in meetings if m.start < now]
+    day_events = list(commits)
     day_commits = [c for c in day_events if c.kind == "commit"]
     day_reviews = [c for c in day_events if c.kind == "review"]
     day_prs = [c for c in day_events if c.kind == "pr"]
@@ -121,9 +138,13 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
     activity_min = coding_min + noncommit_min
     fixed_min = sum(b.minutes for b in anchors)
     target = min(max(int(fixed_min + activity_min + cfg.admin_floor_minutes),
-                     cfg.min_day_minutes), cfg.max_day_minutes)
+                     floor), cfg.max_day_minutes)
     day_end = max(start + timedelta(minutes=target),
                   max((b.end for b in anchors), default=start))
+    if now is not None:                          # never show blocks past the current moment
+        day_end = min(day_end, now.replace(second=0, microsecond=0))
+        if day_end <= start:                     # the day hasn't really started yet
+            return Day(date=date, blocks=[], dropped_after_hours=0)
     free = free_intervals((start, day_end), [(b.start, b.end) for b in anchors])
 
     # The day's GHE work themes, clustered PER KIND so PRs, issues, reviews and
@@ -163,16 +184,30 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
 
 
 def reconstruct_week(meetings: list[Meeting], commits: list[Commit],
-                     week_start: datetime, cfg: Config, llm=None) -> list[Day]:
+                     week_start: datetime, cfg: Config, llm=None, *,
+                     now: datetime | None = None) -> list[Day]:
     tz = ZoneInfo(cfg.tz)
+    if now is None:
+        now = datetime.now(tz)
+    roll = cfg.day_rollover_hour
+    today = logical_date(now, roll)
     days: list[Day] = []
     for i in range(7):
         date = week_start + timedelta(days=i)
-        if date.weekday() not in cfg.workdays:
-            continue
-        m = [x for x in meetings if x.start.date() == date.date()]
-        c = [x for x in commits if x.ts.date() == date.date()]
+        d = date.date()
+        if d > today:
+            continue                       # a day that hasn't happened yet
+        # bucket by work-day (past-midnight work rolls back to the day it started)
+        m = [x for x in meetings if logical_date(x.start, roll) == d]
+        c = [x for x in commits if logical_date(x.ts, roll) == d]
         if not m and not c:
-            continue                       # nothing happened (leave / weekend)
-        days.append(reconstruct_day(date, m, commits, cfg, tz, llm))
+            continue                       # nothing happened (leave / quiet weekend)
+        is_core = date.weekday() in cfg.workdays
+        day = reconstruct_day(
+            date, m, c, cfg, tz, llm,
+            now=(now if d == today else None),
+            floor=(cfg.min_day_minutes if is_core else 0),   # weekends: real effort, no 8h floor
+        )
+        if day.blocks:                     # skip an in-progress day that hasn't started yet
+            days.append(day)
     return days

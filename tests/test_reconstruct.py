@@ -27,7 +27,9 @@ def week():
     meetings = normalize_meetings(data["meetings"], cfg, tz)
     commits = normalize_commits(data["commits"], tz)
     ws = datetime.fromisoformat(data["week_start"]).replace(tzinfo=tz)
-    return reconstruct_week(meetings, commits, ws, cfg), cfg
+    # a fixed 'now' well after the captured week, so no day is future / in-progress
+    now = datetime(2026, 8, 1, 12, 0, tzinfo=tz)
+    return reconstruct_week(meetings, commits, ws, cfg, now=now), cfg
 
 
 def test_five_workdays(week):

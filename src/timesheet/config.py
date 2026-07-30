@@ -17,15 +17,19 @@ from dataclasses import dataclass
 # v4: PR reviews count as effort (background refresh), not just commits.
 # v5: PRs opened + issues authored count too; varied admin labels.
 # v6: daily cap raised 12h -> 14h.
-RECONSTRUCT_VERSION = 6
+# v7: exclude future days + cap today at 'now'; weekends when worked; past-midnight rollover.
+RECONSTRUCT_VERSION = 7
 
 
 @dataclass(frozen=True)
 class Config:
     tz: str = "Europe/Amsterdam"
-    workdays: tuple[int, ...] = (0, 1, 2, 3, 4)          # Mon-Fri
+    workdays: tuple[int, ...] = (0, 1, 2, 3, 4)          # Mon-Fri: the floored "core" days
     day_start: str = "08:30"                             # normal start; earlier only if activity shows it
     earliest_start_floor: str = "06:00"                  # but never open the day before this
+    # Work past midnight belongs to the day it started: activity before this hour is
+    # credited to the previous calendar day (a 01:00 commit is last night's work).
+    day_rollover_hour: int = 5
     snap_minutes: int = 15                               # round edges to :00/:15/:30/:45
 
     # The day length is DRIVEN by estimated effort (git-hours of the day's commits)
@@ -120,6 +124,7 @@ class Config:
             tz=e.get("TZ", "Europe/Amsterdam"),
             day_start=e.get("DAY_START", "08:30"),
             earliest_start_floor=e.get("EARLIEST_START_FLOOR", "06:00"),
+            day_rollover_hour=_i("DAY_ROLLOVER_HOUR", 5),
             min_day_minutes=_i("MIN_DAY_MINUTES", 480),
             max_day_minutes=_i("MAX_DAY_MINUTES", 840),
             rota_enabled=_b("ROTA_ENABLED", False),

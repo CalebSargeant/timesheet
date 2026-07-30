@@ -92,6 +92,8 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
         meetings = [Meeting(m.start, min(m.end, now), m.project, m.taak)
                     for m in meetings if m.start < now]
     day_events = list(commits)
+    if not day_events and not meetings:
+        return Day(date=date, blocks=[], dropped_after_hours=0)
     day_commits = [c for c in day_events if c.kind == "commit"]
     day_reviews = [c for c in day_events if c.kind == "review"]
     day_prs = [c for c in day_events if c.kind == "pr"]
@@ -137,8 +139,7 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
     )
     activity_min = coding_min + noncommit_min
     fixed_min = sum(b.minutes for b in anchors)
-    target = min(max(int(fixed_min + activity_min + cfg.admin_floor_minutes),
-                     floor), cfg.max_day_minutes)
+    target = max(int(fixed_min + activity_min + cfg.admin_floor_minutes), floor)
     day_end = max(start + timedelta(minutes=target),
                   max((b.end for b in anchors), default=start))
     if now is not None:                          # never show blocks past the current moment

@@ -98,11 +98,23 @@ def test_prs_and_issues_show_as_labelled_work():
 
 
 def test_admin_labels_vary_so_quiet_days_are_not_identical():
+    """A day with only a little activity still rotates admin labels."""
     cfg = Config()
     tz = ZoneInfo(cfg.tz)
-    d = reconstruct_day(datetime(2026, 7, 24, tzinfo=tz), [], [], cfg, tz)
+    day = datetime(2026, 7, 24, tzinfo=tz)
+    commits = [Commit(ts=datetime(2026, 7, 24, 10, 0, tzinfo=tz), repo="r", message="fix: thing")]
+    d = reconstruct_day(day, [], commits, cfg, tz)
     admin_taaks = {b.taak for b in d.blocks if b.kind == "admin"}
     assert len(admin_taaks) >= 2, "a quiet day still renders a column of identical admin rows"
+
+
+def test_empty_day_with_no_activity_returns_no_blocks():
+    """A day with no commits and no meetings produces no timesheet entry."""
+    cfg = Config()
+    tz = ZoneInfo(cfg.tz)
+    d = reconstruct_day(datetime(2026, 7, 25, tzinfo=tz), [], [], cfg, tz)
+    assert d.blocks == []
+    assert d.minutes == 0
 
 
 def test_no_mega_blocks(week):

@@ -18,7 +18,8 @@ from dataclasses import dataclass
 # v5: PRs opened + issues authored count too; varied admin labels.
 # v6: daily cap raised 12h -> 14h.
 # v7: exclude future days + cap today at 'now'; weekends when worked; past-midnight rollover.
-RECONSTRUCT_VERSION = 7
+# v8: standup blocks use the real cleaned calendar subject instead of the static "Daily's" label.
+RECONSTRUCT_VERSION = 8
 
 
 @dataclass(frozen=True)
@@ -58,7 +59,6 @@ class Config:
     # Meeting classification.
     standup_markers: tuple[str, ...] = ("standup", "daily")
     standup_project: str = "Intern"
-    standup_taak: str = "Daily's"
     meeting_project: str = "Meeting"
 
     # Calendar items to ignore.

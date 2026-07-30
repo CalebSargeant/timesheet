@@ -127,14 +127,14 @@ def test_standup_present(week):
     days, cfg = week
     # every day that week had a daily standup in the real calendar
     for d in days:
-        assert any(b.taak == cfg.standup_taak for b in d.blocks), f"no standup on {d.date:%a}"
+        assert any(b.project == cfg.standup_project for b in d.blocks), f"no standup on {d.date:%a}"
 
 
 def test_standup_lands_at_local_0845(week):
     """Calendar says 06:45 UTC; the sheet (and the manager) expect 08:45 CEST."""
-    days, _ = week
+    days, cfg = week
     monday = days[0]
-    standup = next(b for b in monday.blocks if b.taak == "Daily's")
+    standup = next(b for b in monday.blocks if b.project == cfg.standup_project)
     assert standup.start.strftime("%H:%M") == "08:45"
 
 
@@ -149,5 +149,4 @@ def test_renderers_produce_output(week):
     data = xlsx.build_week(days)
     assert data[:2] == b"PK" and len(data) > 2000
     page = html.build_week(days, download_url="uren.xlsx")
-    # "Daily's" renders with the apostrophe HTML-escaped, so match the stem.
-    assert "<table" in page and "TOTAAL" in page and "Daily" in page
+    assert "<table" in page and "TOTAAL" in page and "standup" in page.lower()

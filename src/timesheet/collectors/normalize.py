@@ -40,7 +40,7 @@ def normalize_meetings(raw: list[dict], cfg: Config, tz: ZoneInfo) -> list[Meeti
         if end <= start:
             continue
         if any(mk in low for mk in cfg.standup_markers):
-            project, taak = cfg.standup_project, cfg.standup_taak
+            project, taak = cfg.standup_project, _clean_subject(subj)
         else:
             project, taak = cfg.meeting_project, _clean_subject(subj)
         out.append(Meeting(start=start, end=end, project=project, taak=taak))

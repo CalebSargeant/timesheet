@@ -50,7 +50,7 @@ def test_mondays_covering_month():
 
 def _sample_days():
     b = Block(datetime(2026, 7, 20, 9, 0, tzinfo=TZ), datetime(2026, 7, 20, 10, 0, tzinfo=TZ),
-              "Meeting", "Daily's", "meeting")
+              "Meeting", "Weekly sync", "meeting")
     return [Day(datetime(2026, 7, 20, 0, 0, tzinfo=TZ), [b], dropped_after_hours=1)]
 
 

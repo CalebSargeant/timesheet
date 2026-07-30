@@ -13,7 +13,7 @@ page view of already-cached data.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
@@ -30,6 +30,7 @@ from ..periods import (
     resolve_period,
 )
 from ..pipeline import build_from_ingest, collect_week
+from ..reconstruct import logical_date
 from ..render import html as render_html
 from ..render import xlsx as render_xlsx
 from . import security
@@ -46,9 +47,21 @@ def _today() -> date:
     return datetime.now(ZoneInfo(_cfg.tz)).date()
 
 
+def _current_monday() -> date:
+    d = logical_date(datetime.now(ZoneInfo(_cfg.tz)), _cfg.day_rollover_hour)
+    return d - timedelta(days=d.weekday())
+
+
 def _week_days(monday: date) -> list[Day]:
-    """Days for one week: from the store, else reconstruct live (ICS + GHE) and
-    cache. GHE is hit only here, on a cache-miss — never on a cached page view."""
+    """Days for one week. Past weeks come from the store (reconstructed + cached on a
+    miss). The current (in-progress) week is always rebuilt live and never cached:
+    today grows through the day and future days must stay hidden, so a frozen snapshot
+    would be wrong. GHE is hit here, never on a cached page view of a past week."""
+    if monday >= _current_monday():
+        try:
+            return collect_week(monday, _cfg)
+        except Exception:  # noqa: BLE001 — one bad week must not 500 the whole page
+            return []
     cached = _store.get_days(monday)
     if cached is not None:
         return cached

@@ -19,7 +19,8 @@ from dataclasses import dataclass
 # v6: daily cap raised 12h -> 14h.
 # v7: exclude future days + cap today at 'now'; weekends when worked; past-midnight rollover.
 # v8: standup blocks use the real cleaned calendar subject instead of the static "Daily's" label.
-RECONSTRUCT_VERSION = 8
+# v9: removed the 14h daily cap; skip empty days (no commits & no meetings).
+RECONSTRUCT_VERSION = 9
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,7 @@ class Config:
     # a prolific week isn't flattened to 40h. Floored so quiet days still read ~8h
     # ("40h on a slow week"); capped so a marathon day stays believable.
     min_day_minutes: int = 480                           # floor: a normal 8h day
-    max_day_minutes: int = 840                           # cap: 14h (Caleb's real long days run 08:30 past 21:30)
+    max_day_minutes: int = 840                           # was cap: 14h; no longer used (v9), kept for compat
     admin_floor_minutes: int = 30                        # always a little admin
     session_gap_minutes: int = 120                       # git-hours: new session after a 2h gap
     first_commit_minutes: int = 120                      # git-hours: lead-in before the 1st commit

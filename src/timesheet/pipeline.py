@@ -8,7 +8,13 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .collectors import ghe, m365_graph, normalize_commits, normalize_meetings
+from .collectors import (
+    ghe,
+    m365_graph,
+    normalize_commits,
+    normalize_full_days,
+    normalize_meetings,
+)
 from .config import Config
 from .model import Day
 from .reconstruct import reconstruct_week
@@ -56,9 +62,10 @@ def build_week(week_start: date, raw_meetings: list[dict], raw_commits: list[dic
                cfg: Config, llm=None) -> list[Day]:
     tz = ZoneInfo(cfg.tz)
     meetings = normalize_meetings(raw_meetings, cfg, tz)
+    full_days = normalize_full_days(raw_meetings, cfg, tz)   # leave: all-day + busy
     commits = normalize_commits(raw_commits, tz)
     ws = datetime(week_start.year, week_start.month, week_start.day, tzinfo=tz)
-    return reconstruct_week(meetings, commits, ws, cfg, llm)
+    return reconstruct_week(meetings, commits, ws, cfg, llm, full_days=full_days)
 
 
 def collect_week(week_start: date, cfg: Config, llm=None, *, full: bool = False) -> list[Day]:

@@ -10,15 +10,19 @@ Algorithm (all deterministic):
 The day opens at 08:30 (earlier if activity shows it). Work past midnight rolls back
 to the day it started (day_rollover_hour). The in-progress day is capped at 'now',
 and days that haven't happened yet are not emitted (see reconstruct_week).
+
+A full-day busy calendar event (leave / verlof) short-circuits all of this: that day
+is reported as the event, not reconstructed (see full_day).
 """
 from __future__ import annotations
 
+from datetime import date as _date
 from datetime import datetime, timedelta
 from itertools import pairwise
 from zoneinfo import ZoneInfo
 
 from .config import Config
-from .model import Block, Commit, Day, Meeting
+from .model import Block, Commit, Day, FullDayEvent, Meeting
 from .summarize import classify_focus, summarize_block
 from .timeutil import Interval, free_intervals, mins, parse_hhmm, resolve_overlaps, snap
 
@@ -77,6 +81,19 @@ def logical_date(dt: datetime, rollover_hour: int):
     the previous day, so 01:00 work is credited to the night before, not a phantom
     early start the next morning."""
     return (dt - timedelta(hours=rollover_hour)).date()
+
+
+def full_day(date: datetime, ev: FullDayEvent, cfg: Config) -> Day:
+    """A day owned by one all-day busy calendar event: a single normal-length block.
+
+    Nothing is reconstructed around it. A booked day off is a fact, not an estimate,
+    so a stray commit or a standup invite that stayed in the calendar can't turn
+    leave back into a working day — and it isn't clipped at 'now' either, because a
+    whole day of leave is known up front, not accrued hour by hour."""
+    start = _at(date, cfg.day_start)
+    block = Block(start, start + timedelta(minutes=cfg.full_day_minutes),
+                  ev.project, ev.taak, ev.kind)
+    return Day(date=date, blocks=[block], dropped_after_hours=0)
 
 
 def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commit],
@@ -186,24 +203,33 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
 
 def reconstruct_week(meetings: list[Meeting], commits: list[Commit],
                      week_start: datetime, cfg: Config, llm=None, *,
-                     now: datetime | None = None) -> list[Day]:
+                     now: datetime | None = None,
+                     full_days: list[FullDayEvent] | None = None) -> list[Day]:
     tz = ZoneInfo(cfg.tz)
     if now is None:
         now = datetime.now(tz)
     roll = cfg.day_rollover_hour
     today = logical_date(now, roll)
+    owned: dict[_date, FullDayEvent] = {}
+    for ev in full_days or []:             # leave wins if a date has several all-day events
+        cur = owned.get(ev.date)
+        if cur is None or (cur.kind != "leave" and ev.kind == "leave"):
+            owned[ev.date] = ev
     days: list[Day] = []
     for i in range(7):
         date = week_start + timedelta(days=i)
         d = date.date()
         if d > today:
             continue                       # a day that hasn't happened yet
+        is_core = date.weekday() in cfg.workdays
+        if is_core and d in owned:         # leave / another all-day busy event owns the day
+            days.append(full_day(date, owned[d], cfg))
+            continue
         # bucket by work-day (past-midnight work rolls back to the day it started)
         m = [x for x in meetings if logical_date(x.start, roll) == d]
         c = [x for x in commits if logical_date(x.ts, roll) == d]
         if not m and not c:
-            continue                       # nothing happened (leave / quiet weekend)
-        is_core = date.weekday() in cfg.workdays
+            continue                       # nothing happened (quiet weekend)
         day = reconstruct_day(
             date, m, c, cfg, tz, llm,
             now=(now if d == today else None),

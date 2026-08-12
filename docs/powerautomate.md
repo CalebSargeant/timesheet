@@ -32,6 +32,10 @@ Content-Type: application/json
 to Europe/Amsterdam. Emails/Teams only refine the label of admin blocks; leaving
 them out still produces a valid sheet.
 
+Keep `all_day` and `show_as` faithful: an all-day event with `show_as: "busy"` (or
+`"oof"`) is read as **leave** and takes over that whole day, so verlof is reported
+as verlof. All-day items that are merely `"free"` (a desk booking) are ignored.
+
 ## Build the flow (10 minutes, once)
 
 1. **Trigger — Recurrence.** Frequency Week, on Mon–Fri, at ~18:30

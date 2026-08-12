@@ -20,7 +20,8 @@ from dataclasses import dataclass
 # v7: exclude future days + cap today at 'now'; weekends when worked; past-midnight rollover.
 # v8: standup blocks use the real cleaned calendar subject instead of the static "Daily's" label.
 # v9: removed the 14h daily cap; skip empty days (no commits & no meetings).
-RECONSTRUCT_VERSION = 9
+# v10: a full-day busy calendar event owns its day (leave / verlof is reported as leave).
+RECONSTRUCT_VERSION = 10
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,25 @@ class Config:
     drop_show_as: tuple[str, ...] = ("free", "tentative")
     drop_all_day: bool = True
     drop_subject_markers: tuple[str, ...] = ("booking", "desk", "verjaardag", "birthday", "lunch")
+
+    # A full-day calendar event marked BUSY (or out-of-office) OWNS its whole day.
+    # AFAS pushes leave into Outlook as exactly that ("Leave / Verlof", all-day, busy),
+    # and on such a day there is nothing to reconstruct: the sheet must report the
+    # leave, not pad 8h of admin around a standup invite that was declined in practice.
+    # All-day items that are merely 'free' (desk bookings) are unaffected.
+    full_day_owns_day: bool = True
+    full_day_show_as: tuple[str, ...] = ("busy", "oof")
+    full_day_minutes: int = 480                          # booked as a normal 8h day
+    full_day_max_span: int = 60                          # sanity bound on a multi-day event
+    leave_markers: tuple[str, ...] = ("verlof", "vakantie", "leave", "vrije dag", "holiday",
+                                      "feestdag", "afwezig", "absent", "ziek", "sick", "adv")
+    # A published ICS with 'availability only' detail hides real subjects behind a
+    # bare "Busy". A whole day blocked out with nothing said about it is an absence,
+    # not a meeting — so it reads as leave rather than an 8h block called "Busy".
+    leave_blank_subjects: tuple[str, ...] = ("", "busy", "bezet", "private", "privé", "prive",
+                                            "out of office", "geen titel", "no title")
+    leave_project: str = "Verlof"
+    leave_taak: str = "Verlof / afwezig"                 # when the subject says nothing
 
     # Commit-backed focus blocks: keyword -> work category (first match wins).
     focus_rules: tuple[tuple[str, tuple[str, ...]], ...] = (

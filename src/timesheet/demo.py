@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .collectors import normalize_commits, normalize_meetings
+from .collectors import normalize_commits, normalize_full_days, normalize_meetings
 from .config import Config
 from .reconstruct import reconstruct_week
 from .render import html, text, xlsx
@@ -26,10 +26,11 @@ def main(argv: list[str]) -> int:
     cfg = Config()
     tz = ZoneInfo(cfg.tz)
     meetings = normalize_meetings(data.get("meetings", []), cfg, tz)
+    full_days = normalize_full_days(data.get("meetings", []), cfg, tz)
     commits = normalize_commits(data.get("commits", []), tz)
     week_start = datetime.fromisoformat(data["week_start"]).replace(tzinfo=tz)
 
-    week = reconstruct_week(meetings, commits, week_start, cfg)
+    week = reconstruct_week(meetings, commits, week_start, cfg, full_days=full_days)
     print(text.render_text(week))
 
     (outdir / "uren.xlsx").write_bytes(xlsx.build_week(week))

@@ -3,6 +3,7 @@ the reconstructor emits Block; the renderers consume Block."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date as _date
 from datetime import datetime
 
 
@@ -12,6 +13,18 @@ class Meeting:
     end: datetime
     project: str
     taak: str
+
+
+@dataclass
+class FullDayEvent:
+    """An all-day calendar event that owns a whole work-day (leave, a training day).
+
+    A date, not a moment: an all-day event has no local start time, and the day it
+    covers is what the sheet reports."""
+    date: _date              # local calendar date
+    project: str             # 'Project / klant' column
+    taak: str                # the calendar subject, cleaned
+    kind: str = "leave"      # leave | meeting
 
 
 @dataclass
@@ -28,7 +41,7 @@ class Block:
     end: datetime
     project: str             # 'Project / klant' column
     taak: str                # 'Taak' column
-    kind: str = "focus"      # rota | meeting | focus | admin
+    kind: str = "focus"      # rota | meeting | focus | admin | leave
 
     @property
     def minutes(self) -> int:

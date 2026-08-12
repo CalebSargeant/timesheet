@@ -71,6 +71,7 @@ def build_week(week: list[Day], *, title: str = "Uren · Team Cloud",
  .tag.rota{{background:#fde68a;color:#78350f}}
  .tag.focus{{background:#bbf7d0;color:#14532d}}
  .tag.admin{{background:#e5e7eb;color:#374151}}
+ .tag.leave{{background:#ddd6fe;color:#4c1d95}}
  tfoot td{{font-weight:700}}
 </style></head><body>
 <div class="card">

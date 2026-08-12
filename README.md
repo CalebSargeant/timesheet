@@ -10,7 +10,9 @@ For each workday it lays out a chronological timeline of blocks
 (`Datum · Van · Tot · Duur · Project/klant · Taak`) from:
 
 - **Calendar** (a published Outlook **ICS** link) → meetings become fixed anchors
-  (standup, sprint planning, …) at their real local times.
+  (standup, sprint planning, …) at their real local times. An **all-day event marked
+  busy** owns its whole day instead: leave (AFAS pushes "Leave / Verlof" into Outlook)
+  is reported as one 8h `Verlof` row, not reconstructed into a padded day of admin.
 - **A morning on-call rota** → the fixed 07:30 "ochtenddienst / Checks en standby".
 - **GitHub-Enterprise commits** (`pinkroccade.ghe.com`) → focus blocks anchored to
   when the work actually happened, labelled from the commit content

@@ -62,6 +62,8 @@ def normalize_full_days(raw: list[dict], cfg: Config, tz: ZoneInfo) -> list[Full
     for m in raw:
         if not m.get("all_day"):
             continue
+        # Missing show_as is treated as "busy" (blocking) here, unlike normalize_meetings
+        # where it defaults to "" (free). All-day events without the field are absences.
         if (m.get("show_as") or "busy").lower() not in cfg.full_day_show_as:
             continue
         subj = m.get("subject", "") or ""

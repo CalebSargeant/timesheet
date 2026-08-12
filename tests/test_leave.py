@@ -85,7 +85,7 @@ def test_timed_busy_meetings_are_not_leave():
     assert normalize_full_days([STANDUP], Config(), TZ) == []
 
 
-def test_multi_day_leave_covers_each_workday_but_not_the_weekend():
+def test_multi_day_leave_expands_all_dates_weekends_filtered_by_reconstruct():
     # Fri 7 Aug through Mon 10 Aug inclusive (Outlook's end date is exclusive)
     leave = dict(LEAVE, end_utc="2026-08-11T00:00:00")
     cfg = Config()

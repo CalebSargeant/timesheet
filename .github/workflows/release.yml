@@ -39,12 +39,12 @@ jobs:
             echo "image_name=" >> "$GITHUB_OUTPUT"
           fi
       - if: github.event_name == 'pull_request' && steps.detect.outputs.image_name != ''
-        uses: magmamoose/diatreme@453fc82a4c0bd0dd90d868c7e04266f2da7ca4e9 # v2.6.0
+        uses: magmamoose/diatreme@7d4d208385164ca78a72d1a5c1eb397646af89ba # v2.6.1
         with:
           mode: ci
           image_name: ${{ steps.detect.outputs.image_name }}
       - if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-        uses: magmamoose/diatreme@453fc82a4c0bd0dd90d868c7e04266f2da7ca4e9 # v2.6.0
+        uses: magmamoose/diatreme@7d4d208385164ca78a72d1a5c1eb397646af89ba # v2.6.1
         with:
           mode: release
           versioning-tool: gitversion

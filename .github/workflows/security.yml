@@ -23,11 +23,11 @@ permissions:
 
 jobs:
   chargate:
-    # Per-repo runner toggle, shared with the release (Diatreme) workflow.
-    # Set the SELFHOSTED_GITHUB_RUNNER variable to a self-hosted runner label
-    # to route this repo's managed workflows to a cluster pool — free minutes
-    # and a warm MegaLinter image. Leave it unset/blank to stay on
-    # GitHub-hosted; blanking it is also the instant escape hatch if the
+    # Runner routing, rendered by visibility — see `template_vars` at the top of
+    # settings.yml. Public repos get a literal `ubuntu-latest` (GitHub-hosted
+    # minutes are free on public repos, and this keeps them out of the self-hosted
+    # queue); private/internal repos get the SELFHOSTED_GITHUB_RUNNER expression,
+    # so blanking that variable is still the instant escape hatch if the
     # self-hosted runners bomb out.
     runs-on: ${{ vars.SELFHOSTED_GITHUB_RUNNER || 'ubuntu-latest' }}
     steps:

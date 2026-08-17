@@ -24,14 +24,17 @@ permissions:
 jobs:
   chargate:
     # Runner routing, rendered by visibility — see `template_vars` at the top of
-    # settings.yml. Public repos get a literal `ubuntu-latest` (GitHub-hosted
-    # minutes are free on public repos, and this keeps them out of the self-hosted
-    # queue); private/internal repos get the SELFHOSTED_GITHUB_RUNNER expression,
+    # settings.yml. `runs_on_amd64`, NOT `runs_on`: Chargate is amd64-only in
+    # practice (arm64 runs MegaLinter's per-linter images sequentially and the job
+    # never finishes — see the note on the var). Public repos get a literal
+    # `ubuntu-latest` (GitHub-hosted minutes are free on public repos, and this
+    # keeps them out of the self-hosted queue); private/internal repos get the
+    # amd64-pinned expression,
     # so blanking that variable is still the instant escape hatch if the
     # self-hosted runners bomb out.
-    runs-on: ${{ vars.SELFHOSTED_GITHUB_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.SELFHOSTED_GITHUB_RUNNER && 'pool-amd64' || 'ubuntu-latest' }}
     steps:
-      - uses: magmamoose/chargate@bebb4ed06ba774f6302232a27fcff62a5f70dc34 # v2.11.1
+      - uses: magmamoose/chargate@13239654c6395322b0698720f0f7cfc4c2f7e40e # v2.11.10
         with:
           defectdojo_url: ${{ vars.MM_DEFECTDOJO_URL }}
           defectdojo_token: ${{ secrets.MM_DEFECTDOJO_API_KEY }}

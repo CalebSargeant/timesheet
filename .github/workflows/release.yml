@@ -61,13 +61,13 @@ jobs:
           fi
       # PR: verify the image builds (image repos only).
       - if: github.event_name == 'pull_request' && steps.detect.outputs.image_name != ''
-        uses: magmamoose/diatreme@3103a8f7a077d8c60eb1602ae7bbd23e420d7cfd # v2.7.0
+        uses: magmamoose/diatreme@79056f54fdfba54c0b260ffa371df14b94f1a8e6 # v2.8.0
         with:
           mode: ci
           image_name: ${{ steps.detect.outputs.image_name }}
       # Default-branch push (or manual dispatch): version + release.
       - if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-        uses: magmamoose/diatreme@3103a8f7a077d8c60eb1602ae7bbd23e420d7cfd # v2.7.0
+        uses: magmamoose/diatreme@79056f54fdfba54c0b260ffa371df14b94f1a8e6 # v2.8.0
         with:
           mode: release
           versioning-tool: gitversion

@@ -1,9 +1,17 @@
+# `cooldown` holds a newly published version back for 7 days before Dependabot will
+# propose it, so a compromised or yanked release has a window to be caught and pulled
+# before it reaches a PR. GitHub already applies 3 days implicitly; 7 is the hardened
+# value, and it has to be repeated per `package-ecosystem` — there is no file-level key.
+# Version updates only: GitHub exempts security updates, so an advisory fix still opens
+# its PR immediately.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       actions-version:
         applies-to: version-updates

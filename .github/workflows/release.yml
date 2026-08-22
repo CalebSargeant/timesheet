@@ -1,25 +1,37 @@
+# Chargate/KICS suppression (reviewed false positive, not a vulnerability):
+#   baee238e... Passwords And Secrets - Generic Token misfires on the required
+#   `id-token: write` GitHub OIDC permission key below — no secret is present.
 # kics-scan disable=baee238e-1921-4801-9c3f-79ae1d7b2cbc
 name: Release
 
-# Diatreme release workflow (org template). Detects the Dockerfile -> on PRs it
-# builds+pushes a pr-<N> image (verify before merge); on push to main it versions,
-# releases, and promotes the image to ghcr.io/magmamoose/github-timesheet.
+# Diatreme release workflow (one image-aware template for the whole org).
+#
+# Detects a container build (docker-bake.hcl / Dockerfile):
+#   - pull_request: image repos run `mode: ci` -> BUILD + push a pr-<N> image to
+#     GHCR, so the build is verified BEFORE merge. Non-image repos no-op (the
+#     required `diatreme` check passes trivially).
+#   - push to the default branch: `mode: release` -> version + GitHub Release;
+#     image repos also promote the image.
+#
+# versioning-tool defaults to gitversion (language-agnostic). Per-repo overrides:
+#   - Python: versioning-tool: semantic-release-python (+ a pyproject config).
+#   - Node:   versioning-tool: semantic-release-npm.
+#   - Non-`main` default branch (e.g. master): set on.push.branches to match.
+#
+# All actions are SHA-pinned (Chargate's pre-commit hook enforces this); the
+# trailing `# vX.Y.Z` comment tracks the tag each pinned SHA corresponds to.
 
 on:
   pull_request:
   push:
     branches: [main]
-    paths-ignore:
-      - '**/*.md'
-      - docs/**
-      - LICENSE
-      - .gitignore
+    paths-ignore: ['**/*.md', 'docs/**', 'mkdocs.yml', 'LICENSE', '.gitignore']
   workflow_dispatch:
 
 permissions:
   contents: write     # version bump + tag on release
-  id-token: write     # OIDC for the Diatreme token broker
-  packages: write     # push the image to GHCR
+  id-token: write     # OIDC for the Diatreme public-app token broker
+  packages: write     # push the PR/release container image to GHCR
 
 concurrency:
   group: release-${{ github.ref }}
@@ -27,24 +39,30 @@ concurrency:
 
 jobs:
   diatreme:
+    # Same visibility-based routing as security.yml — see `template_vars` at the
+    # top of settings.yml.
     runs-on: ${{ vars.SELFHOSTED_GITHUB_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: detect
         shell: bash
+        # image_name is set only when the repo builds a container image; Diatreme
+        # gates all image steps on image_name != '', so non-image repos no-op.
         run: |
           if [ -f docker-bake.hcl ] || [ -f Dockerfile ]; then
             echo "image_name=${{ github.event.repository.name }}" >> "$GITHUB_OUTPUT"
           else
             echo "image_name=" >> "$GITHUB_OUTPUT"
           fi
+      # PR: verify the image builds (image repos only).
       - if: github.event_name == 'pull_request' && steps.detect.outputs.image_name != ''
-        uses: magmamoose/diatreme@453fc82a4c0bd0dd90d868c7e04266f2da7ca4e9 # v2.6.0
+        uses: magmamoose/diatreme@79056f54fdfba54c0b260ffa371df14b94f1a8e6 # v2.8.0
         with:
           mode: ci
           image_name: ${{ steps.detect.outputs.image_name }}
+      # Default-branch push (or manual dispatch): version + release.
       - if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-        uses: magmamoose/diatreme@453fc82a4c0bd0dd90d868c7e04266f2da7ca4e9 # v2.6.0
+        uses: magmamoose/diatreme@79056f54fdfba54c0b260ffa371df14b94f1a8e6 # v2.8.0
         with:
           mode: release
           versioning-tool: gitversion

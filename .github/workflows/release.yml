@@ -61,7 +61,8 @@ jobs:
           mode: ci
           image_name: ${{ steps.detect.outputs.image_name }}
       # Default-branch push (or manual dispatch): version + release.
-      - if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      - id: release
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: magmamoose/diatreme@79056f54fdfba54c0b260ffa371df14b94f1a8e6 # v2.8.0
         with:
           mode: release
@@ -70,3 +71,40 @@ jobs:
           environments: '["prod"]'
           prerelease-identifiers: '{}'
           image_name: ${{ steps.detect.outputs.image_name }}
+      # Keep the floating major tag (v1, v2, ...) on the newest stable release, so
+      # `uses: owner/repo@v2` means something. Nothing moved it before: chargate's
+      # `v2` was set once and sat on v2.11.1 while the repo shipped v2.11.28, and
+      # Chargate's own pin hook faithfully wrote `# v2.11.1` beside every SHA it
+      # resolved from it. Diatreme moves its own major tag from a bespoke step in
+      # its own release.yaml, which is why it is in `skip_repos` above.
+      #
+      # Scoped by `hashFiles` to repos that publish an action, because only those
+      # are consumed by ref. Everything else keeps a clean tag list.
+      #
+      # Prereleases never move it: a floating major pointing at an rc would ship
+      # one to every consumer pinned on the major. Pushed with the checkout's
+      # GITHUB_TOKEN (`contents: write` above), which deliberately triggers no
+      # workflows — a retag must not start another release.
+      - name: Update floating major tag
+        if: >-
+          steps.release.outputs.released == 'true'
+          && !contains(steps.release.outputs.version, '-')
+          && hashFiles('action.yml', 'action.yaml') != ''
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          # `tag` carries whatever prefix the repo uses (v1.2.3, pkg-v1.2.3), so
+          # recover it by stripping the version off the end rather than assuming `v`.
+          prefix="${RELEASE_TAG%"${RELEASE_VERSION}"}"
+          major_tag="${prefix}${RELEASE_VERSION%%.*}"
+          # Fetch just the tag Diatreme pushed: the checkout is shallow, and
+          # `--tags` on a shallow clone drags in far more than one ref needs.
+          git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          target="$(git rev-list -n 1 "${RELEASE_TAG}")"
+          # Lightweight on purpose — no annotation, so no committer identity and
+          # nothing for a repo-level `tag.gpgSign` to try to sign.
+          git tag -f "${major_tag}" "${target}"
+          git push origin "refs/tags/${major_tag}" --force
+          echo "${major_tag} -> ${target} (${RELEASE_TAG})"

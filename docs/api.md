@@ -96,7 +96,10 @@ Ingest calendar, email, and Teams activity signals from Power Automate (or compa
   "ok": true,
   "week_start": "2026-07-20",
   "total_hm": "40:00",
+  "total_minutes": 2400,
   "days": 5,
+  "logic_version": "<current version string>",
+  "full": false,
   "generated_at": "2026-07-24T18:30:00+02:00"
 }
 ```
@@ -120,7 +123,10 @@ Metadata about the last reconstruction: when it ran, how many days, total hours.
   "ok": true,
   "week_start": "2026-07-20",
   "total_hm": "40:00",
+  "total_minutes": 2400,
   "days": 5,
+  "logic_version": "<current version string>",
+  "full": false,
   "generated_at": "2026-07-24T18:30:00+02:00"
 }
 ```

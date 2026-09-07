@@ -5,7 +5,12 @@ out/
 /data/
 /data-live/
 .env
+# Credential-grade. A refresh token is standing read access to the mailbox
+# that never re-prompts for MFA, and it renews itself while it is used.
 *.token.json
+m365-mcp-token.json
+.m365-mcp-token.json
+*-token.json
 .pytest_cache/
 .ruff_cache/
 dist/

@@ -1,5 +1,13 @@
 # Power Automate → `uren.calebsargeant.com` ingest
 
+!!! note "Still supported, no longer needed"
+    `M365_SOURCE=mcp` reads calendar, sent mail **and** Teams activity directly
+    over Claude's Microsoft 365 connector, which is what this flow was built to
+    push in. See "Where the calendar comes from" in the README. Keep this page
+    for a tenant where the connector is unavailable, or as the fallback if
+    Anthropic changes that endpoint — it is undocumented and they own the app
+    registration.
+
 Device-code / app-registration auth is locked down in the LOCGOV tenant
 (`AADSTS65002` / `700016` — Microsoft no longer preauthorizes third-party client
 IDs for Graph). Power Automate sidesteps this entirely: its **Office 365 Outlook**

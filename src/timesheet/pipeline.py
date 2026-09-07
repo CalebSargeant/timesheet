@@ -146,7 +146,7 @@ def collect_week(week_start: date, cfg: Config, llm=None, *, full: bool = False)
         try:
             enrich_admin(days, m365_mcp.fetch_emails(win_start, win_end),
                          m365_mcp.fetch_teams(win_start, win_end), tz)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logging.getLogger(__name__).warning("enrichment skipped", exc_info=True)
 
     return days

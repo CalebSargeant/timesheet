@@ -191,6 +191,12 @@ def fetch_teams(start: datetime, end: datetime, *, sender: str | None = None) ->
     never their durations, so a thin read costs nothing but a generic label.
     """
     sender = sender or os.environ.get("M365_MCP_TEAMS_SENDER") or me().get("displayName", "")
+    if not sender:
+        # Without a name there is nothing to filter on, and an unfiltered read
+        # would count colleagues' messages as evidence of the user's own hours.
+        # No signal beats a wrong one: admin blocks keep their generic label.
+        log.warning("m365-mcp: cannot tell who the signed-in user is; skipping Teams")
+        return []
     found = mcp_client.search(
         "chat_message_search",
         query="*",
@@ -201,7 +207,7 @@ def fetch_teams(start: datetime, end: datetime, *, sender: str | None = None) ->
     out = []
     for item in found.items:
         who = ((item.get("from") or {}).get("displayName") or "").strip()
-        if sender and who and who.lower() != sender.strip().lower():
+        if who.lower() != sender.strip().lower():
             continue
         stamp = item.get("createdDateTime")
         if stamp:
@@ -211,7 +217,9 @@ def fetch_teams(start: datetime, end: datetime, *, sender: str | None = None) ->
 
 
 def me() -> dict:
-    return mcp_client.call("get_me").items[0]
+    """The signed-in user, or {} if the connector answered with nothing."""
+    items = mcp_client.call("get_me").items
+    return items[0] if items else {}
 
 
 if __name__ == "__main__":

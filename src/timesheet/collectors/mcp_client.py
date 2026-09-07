@@ -32,9 +32,11 @@ the other's file.
 from __future__ import annotations
 
 import base64
+import itertools
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import time
@@ -58,9 +60,17 @@ MCP_URL = os.environ.get("M365_MCP_URL", "https://microsoft365.mcp.claude.com/mc
 TENANT = os.environ.get("M365_MCP_TENANT", "organizations")
 PROTOCOL = "2025-06-18"
 
+# A tenant is one path segment: a GUID, a verified domain, or an Entra alias.
+# Interpolating anything else into the authority URL would let an env var steer
+# the token request somewhere else entirely.
+_TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
 CACHE = Path(os.path.expanduser(os.environ.get("M365_MCP_TOKEN_CACHE", "~/.m365-mcp-token.json")))
 SEED = os.environ.get("M365_MCP_TOKEN_SEED", "")
 SEED_JSON = os.environ.get("M365_MCP_TOKEN_JSON", "")
+
+if not _TENANT_RE.match(TENANT):
+    raise ValueError(f"M365_MCP_TENANT is not a single URL path segment: {TENANT!r}")
 
 _AUTH = f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0"
 
@@ -81,10 +91,24 @@ class McpAuthError(McpError):
 # --- auth ------------------------------------------------------------------
 
 
+def _urlopen(url: str, *, data: bytes, headers: dict | None = None, timeout: int):
+    """Open an **https** URL, and nothing else.
+
+    Both URLs this module opens are assembled from env vars (M365_MCP_URL,
+    M365_MCP_TENANT) and urllib also speaks file:// and ftp://. Without this
+    check a mistyped or hostile variable turns a token request into a local file
+    read whose contents are then posted onward.
+    """
+    if not url.startswith("https://"):
+        raise McpError(f"refusing to open a non-https URL: {url[:60]!r}")
+    req = urllib.request.Request(url, data=data, headers=headers or {})
+    # nosec B310 - the scheme is checked immediately above
+    return urllib.request.urlopen(req, timeout=timeout)  # noqa: S310  # nosemgrep
+
+
 def _post_form(url: str, data: dict) -> dict:
-    req = urllib.request.Request(url, data=urllib.parse.urlencode(data).encode())
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with _urlopen(url, data=urllib.parse.urlencode(data).encode(), timeout=30) as r:
             return json.loads(r.read().decode())
     except urllib.error.HTTPError as e:
         # Entra puts the reason in the body of a 4xx, so the body is the point.
@@ -110,12 +134,14 @@ def _cache_path() -> Path:
         CACHE.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(SEED, CACHE)
         CACHE.chmod(0o600)
-        log.info("m365-mcp: seeded token cache from %s", SEED)
+        # The path, never the contents. Nothing here logs a token,
+        # an authorisation header or a device code.
+        log.info("m365-mcp: cache seeded from %s", SEED)
     elif SEED_JSON.strip():
         CACHE.parent.mkdir(parents=True, exist_ok=True)
         CACHE.write_text(SEED_JSON)
         CACHE.chmod(0o600)
-        log.info("m365-mcp: seeded token cache from M365_MCP_TOKEN_JSON")
+        log.info("m365-mcp: cache seeded from the environment")
     return CACHE
 
 
@@ -212,16 +238,24 @@ def token(*, allow_device_code: bool = False) -> str:
 _ready = False
 
 
+# JSON-RPC ids must be unique within a session. The connector is stateless and
+# answers one request per POST, so reusing 1 happens to work — but a server that
+# starts rejecting duplicates would fail on the second call with an error naming
+# neither the id nor this module.
+_request_id = itertools.count(1)
+
+
 def _rpc(method: str, params: dict) -> dict:
-    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
-    req = urllib.request.Request(MCP_URL, data=body, headers={
-        "Authorization": "Bearer " + token(),
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-        "MCP-Protocol-Version": PROTOCOL,
-    })
+    body = json.dumps(
+        {"jsonrpc": "2.0", "id": next(_request_id), "method": method, "params": params}).encode()
     try:
-        with urllib.request.urlopen(req, timeout=120) as r:
+        r = _urlopen(MCP_URL, data=body, timeout=120, headers={
+            "Authorization": "Bearer " + token(),
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": PROTOCOL,
+        })
+        with r:
             raw = r.read().decode()
     except urllib.error.HTTPError as e:
         raise McpError(f"MCP HTTP {e.code}: {e.read().decode()[:300]}") from e
@@ -273,7 +307,14 @@ _FOOTER_KEYS = {"nextOffset", "moreResults", "totalResultCount", "nextCursor"}
 
 
 def call(tool: str, **arguments) -> Page:
-    """Call one tool and split its content blocks. Raises on a block it cannot place."""
+    """Call one tool and split its content blocks.
+
+    A block that cannot be placed is recorded as a note, which marks the search
+    incomplete. Neither extreme is right: skipping it silently would make a
+    moved payload look like a quiet week, and raising would let one new metadata
+    block — at an endpoint Anthropic owns and does not document — break every
+    calendar fetch outright.
+    """
     _handshake()
     result = _rpc("tools/call", {"name": tool, "arguments": arguments})
     blocks = result.get("content", [])
@@ -300,7 +341,8 @@ def call(tool: str, **arguments) -> Page:
             page.next_offset = parsed.get("nextOffset")
             page.total = parsed.get("totalResultCount")
         else:
-            raise McpError(f"{tool}: unrecognised content block {sorted(parsed)}")
+            log.warning("m365-mcp: %s returned an unrecognised block %s", tool, sorted(parsed))
+            page.notes.append(f"unrecognised content block: {sorted(parsed)}")
     return page
 
 

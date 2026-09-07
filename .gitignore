@@ -12,6 +12,9 @@ m365-mcp-token.json
 .m365-mcp-token.json
 *-token.json
 .pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
 .ruff_cache/
 dist/
 build/

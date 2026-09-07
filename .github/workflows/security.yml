@@ -12,6 +12,22 @@ name: Security
 on:
   pull_request:
 
+# A superseded run MUST die. Chargate takes ~15 minutes, and its findings are a
+# statement about the ONE commit it scanned: without this, a push mid-run leaves the
+# old run alive to post inline "net-new finding" comments minutes AFTER the commit
+# that fixed them, against a SHA that is no longer the head. GitHub still renders
+# those threads on a live line, so nothing marks them outdated, and Nievah's triage
+# re-fixed the same line every round while each of its pushes superseded the next
+# scan (MagmaMoose/dunmir#157: DS440011 "fixed" twice, back both times).
+#
+# Chargate's OWN security.yml has carried this since forever; this template did not,
+# and chargate is skip_repos'd out of it — the same shape as the `id-token` gap in
+# MagmaMoose/caldrith#71, where the one repo that looked healthy was the one repo
+# this file never reached. Kept byte-identical to chargate's so they cannot drift.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: write

@@ -6,9 +6,14 @@ metadata:
   labels:
     {{- include "gts.labels" . | nindent 4 }}
 data:
-  # Non-secret runtime config. Secrets (DATABASE_URL, M365_ICS_URL, GHE_TOKEN,
-  # INGEST_TOKEN, SMTP_PASSWORD, …) come from the -env Secret, not here.
+  # Non-secret runtime config. Secrets (DATABASE_URL, M365_ICS_URL,
+  # M365_MCP_TOKEN_JSON, GHE_TOKEN, INGEST_TOKEN, SMTP_PASSWORD, …) come from
+  # the -env Secret, not here.
   TZ: {{ .Values.config.tz | quote }}
+  {{- with .Values.config.m365Source }}
+  M365_SOURCE: {{ . | quote }}
+  {{- end }}
+  M365_MCP_TOKEN_CACHE: {{ .Values.config.m365McpTokenCache | quote }}
   DAY_START: {{ .Values.config.dayStart | quote }}
   ROTA_ENABLED: {{ .Values.config.rotaEnabled | quote }}
   ROTA_MINUTES: {{ .Values.config.rotaMinutes | quote }}

@@ -21,7 +21,8 @@ from dataclasses import dataclass
 # v8: standup blocks use the real cleaned calendar subject instead of the static "Daily's" label.
 # v9: removed the 14h daily cap; skip empty days (no commits & no meetings).
 # v10: a full-day busy calendar event owns its day (leave / verlof is reported as leave).
-RECONSTRUCT_VERSION = 10
+# v11: admin blocks can be relabelled from real email/Teams activity (M365_SOURCE=mcp).
+RECONSTRUCT_VERSION = 11
 
 
 @dataclass(frozen=True)

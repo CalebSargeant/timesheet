@@ -52,8 +52,3 @@ jobs:
           # naming it here would be a second place to keep in sync with the tool.
           pr_comment: 'true'
           token_broker_url: https://broker-brimyr.magmamoose.com
-          # The action runs the repo's tests itself, in its own checkout, with no
-          # install step — so a bare `pytest` is "pytest: not found" and the gate
-          # reports BROKEN rather than a coverage number. Install first.
-          # coverage.xml itself comes from the addopts in pyproject.toml.
-          test_command: 'pip install -e ".[dev,service]" && pytest'

@@ -62,12 +62,13 @@ def _sources(store, user: users.User) -> Sources:
     except crypto.CryptoUnavailable:
         tokens = None
     if tokens:
-        meta = store.credential_meta(user.id, MICROSOFT) or {}
-        session = McpSession(
-            tokens=tokens,
-            on_rotate=lambda fresh, uid=user.id, acct=meta.get("account", ""):
-                store.put_credential(uid, MICROSOFT, fresh, account=acct),
-        )
+        account = (store.credential_meta(user.id, MICROSOFT) or {}).get("account", "")
+        uid = user.id
+
+        def remember(fresh: dict) -> None:
+            store.put_credential(uid, MICROSOFT, fresh, account=account)
+
+        session = McpSession(tokens=tokens, on_rotate=remember)
     return Sources(github=gh, m365=session)
 
 
@@ -91,7 +92,7 @@ def refresh_user(store, user: users.User, week: date, *, env_cfg: Config,
             continue
         try:
             past = collect_week(m, cfg, sources, llm=llm, full=True)
-        except Exception:  # noqa: BLE001 — a backfill is a nicety, not the job
+        except Exception:
             log.warning("%s: backfill of %s failed", user.login, m, exc_info=True)
             continue
         store.save(user.id, m, {}, past, full=True)
@@ -148,9 +149,11 @@ def main(argv: list[str]) -> int:
         try:
             refresh_user(store, user, week, env_cfg=env_cfg, send=send, backfill=backfill,
                          mailer=mailer, public_url=public_url)
-        except Exception:  # noqa: BLE001 — one account must not take down the run
+        # Deliberately broad. A job serving twenty people that dies on the first
+        # expired token has taken the service down for the other nineteen.
+        except Exception:
             failures += 1
-            log.error("%s: refresh failed", user.login, exc_info=True)
+            log.exception("%s: refresh failed", user.login)
 
     if failures:
         log.error("%d of %d account(s) failed", failures, len(accounts))

@@ -18,8 +18,8 @@ def table(week: list[Day], loc: i18n.Locale) -> tuple[str, int]:
         d = day.date
         rows.append(
             f'<tr class="day"><td colspan="6">{esc(loc.days[d.weekday()])} {d.day} '
-            f'{esc(loc.months[d.month])} &nbsp;·&nbsp; <b>{hm(day.minutes)}{esc(loc.subtitle_hours)}'
-            '</b></td></tr>')
+            f'{esc(loc.months[d.month])} &nbsp;·&nbsp; '
+            f'<b>{hm(day.minutes)}{esc(loc.subtitle_hours)}</b></td></tr>')
         for b in day.blocks:
             rows.append(
                 f'<tr><td>{d.day:02d}-{d.month:02d}</td><td>{b.start:%H:%M}</td>'

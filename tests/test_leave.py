@@ -49,7 +49,8 @@ def _friday(days):
 def test_all_day_busy_event_is_detected_as_leave():
     cfg = BASE
     evs = normalize_full_days([LEAVE], cfg, TZ)
-    assert [e.date for e in evs] == [date(2026, 8, 7)]      # not the 6th: it's a date, not UTC midnight
+    # The 7th, not the 6th: an all-day event is a date, not a UTC midnight.
+    assert [e.date for e in evs] == [date(2026, 8, 7)]
     assert evs[0].project == cfg.labels.leave_project and evs[0].kind == "leave"
     assert evs[0].taak == "Leave / Verlof"
 

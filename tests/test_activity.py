@@ -34,7 +34,7 @@ def test_one_message_is_worth_its_lead_in():
 def test_a_burst_is_worth_its_span_plus_one_lead_in():
     """Forty messages in ten minutes is ten minutes of work, not forty
     messages' worth."""
-    stamps = [at(10, m).ts for m in range(0, 10)]
+    stamps = [at(10, m).ts for m in range(10)]
     assert act.session_minutes(stamps, 30, 6) == 6 + 9
 
 

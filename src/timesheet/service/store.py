@@ -6,7 +6,7 @@ another. That is the whole security model of a multi-user deployment, and it is
 enforced here rather than in the route handlers, where one forgotten filter would
 be a data breach.
 
-Each Mon–Sun week is stored once per user (keyed by its Monday) with its
+Each Mon-Sun week is stored once per user (keyed by its Monday) with its
 reconstructed `days`, so the service can assemble any period from stored weeks and
 render on demand. The upstream APIs are only hit when a requested week isn't
 cached yet.
@@ -18,6 +18,7 @@ Two backends behind one interface:
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from datetime import date, datetime
@@ -131,10 +132,8 @@ class FileStore:
             "connected_at": datetime.now(self.tz).isoformat(),
         }
         p.write_text(json.dumps(doc))
-        try:
+        with contextlib.suppress(OSError):   # a mode is a nicety, not the point
             p.chmod(0o600)
-        except OSError:
-            pass
 
     def get_credential(self, user_id: str, provider: str) -> dict | None:
         row = self._creds(user_id).get(provider)
@@ -281,14 +280,18 @@ class PgStore:
 
     def get_user(self, user_id: str) -> User | None:
         with self._conn() as c:
-            row = c.execute(f"SELECT {self._USER_COLS} FROM timesheet_user WHERE id=%s",
-                            (user_id,)).fetchone()
+            # _USER_COLS is a class constant, never anything a request supplies.
+            row = c.execute(
+                f"SELECT {self._USER_COLS} FROM timesheet_user WHERE id=%s",  # noqa: S608
+                (user_id,)).fetchone()
         return self._row_to_user(row) if row else None
 
     def list_users(self) -> list[User]:
         with self._conn() as c:
+            # _USER_COLS is a class constant, never anything a request supplies.
             rows = c.execute(
-                f"SELECT {self._USER_COLS} FROM timesheet_user ORDER BY created_at").fetchall()
+                f"SELECT {self._USER_COLS} FROM timesheet_user "  # noqa: S608
+                "ORDER BY created_at").fetchall()
         return [self._row_to_user(r) for r in rows]
 
     def count_users(self) -> int:

@@ -14,12 +14,15 @@ fallback (`m365_ics.py` / `M365_ICS_URL`).
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
+
+from ..net import open_url
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 # Microsoft first-party public clients. Graph PowerShell (14d82eec-…) is the tidy
@@ -63,10 +66,8 @@ def _save(cache):
         p = _cache_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(cache.serialize())
-        try:
+        with contextlib.suppress(OSError):   # a mode is a nicety, not the point
             os.chmod(p, 0o600)
-        except OSError:
-            pass
 
 
 def login(client_id: str | None = None, scopes: list[str] | None = None) -> dict:
@@ -79,7 +80,8 @@ def login(client_id: str | None = None, scopes: list[str] | None = None) -> dict
     result = app.acquire_token_by_device_flow(flow)     # blocks, polling
     _save(cache)
     if "access_token" not in result:
-        raise RuntimeError(f"login failed: {result.get('error')}: {result.get('error_description')}")
+        raise RuntimeError(
+            f"login failed: {result.get('error')}: {result.get('error_description')}")
     return result
 
 
@@ -100,7 +102,8 @@ def poll(client_id: str | None = None, scopes: list[str] | None = None) -> dict:
     result = app.acquire_token_by_device_flow(flow)     # blocks, polling
     _save(cache)
     if "access_token" not in result:
-        raise RuntimeError(f"login failed: {result.get('error')}: {result.get('error_description')}")
+        raise RuntimeError(
+            f"login failed: {result.get('error')}: {result.get('error_description')}")
     return result
 
 
@@ -118,10 +121,11 @@ def get_token(client_id: str | None = None, scopes: list[str] | None = None) -> 
 
 
 def _graph_get(path: str, token: str, prefer: str | None = None) -> dict:
-    req = urllib.request.Request(f"{GRAPH}{path}", headers={"Authorization": f"Bearer {token}"})
+    req = urllib.request.Request(  # noqa: S310 — opened through net.open_url
+        f"{GRAPH}{path}", headers={"Authorization": f"Bearer {token}"})
     if prefer:
         req.add_header("Prefer", prefer)
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with open_url(req, timeout=30) as r:
         return json.loads(r.read())
 
 
@@ -161,13 +165,14 @@ if __name__ == "__main__":
         poll()
         tok = get_token()
         me = whoami(tok)
-        print(f"\n✓ logged in as {me.get('displayName')} <{me.get('mail') or me.get('userPrincipalName')}>", flush=True)
+        who = me.get("mail") or me.get("userPrincipalName")
+        print(f"\n✓ logged in as {me.get('displayName')} <{who}>", flush=True)
     elif cmd == "login":
         login()
         tok = get_token()
         me = whoami(tok)
-        print(f"\n✓ logged in as {me.get('displayName')} <{me.get('mail') or me.get('userPrincipalName')}> "
-              f"({me.get('jobTitle')})")
+        who = me.get("mail") or me.get("userPrincipalName")
+        print(f"\n✓ logged in as {me.get('displayName')} <{who}> ({me.get('jobTitle')})")
         print(f"  token cache: {_cache_path()}")
     elif cmd == "pull":
         tz_start = datetime.fromisoformat(sys.argv[2]).replace(tzinfo=UTC)

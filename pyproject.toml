@@ -40,7 +40,9 @@ service = [
 ]
 # Only for the device-code Microsoft Graph collector, which most tenants block.
 graph = ["msal>=1.28"]
-dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.5"]
+# Ruff is pinned to a floor, not left open: each release turns on more default
+# rules, so an older local copy passes what CI then rejects.
+dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.16"]
 
 [project.scripts]
 timesheet-demo = "timesheet.demo:main"
@@ -51,6 +53,26 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
+
+# Selected explicitly rather than left on the defaults: each ruff release turns
+# more rules on, and a lint set that changes underneath you fails CI on a commit
+# that touched none of it.
+[tool.ruff.lint]
+select = [
+    "E", "W", "F",   # pycodestyle + pyflakes
+    "I",             # import order
+    "B",             # bugbear
+    "BLE",           # blind `except Exception` — every one here is argued for in a comment
+    "S",             # bandit: this service holds delegated mailbox tokens
+    "C4", "UP", "SIM", "PIE", "G", "RUF",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "S101",   # assert IS the test
+    "S105", "S106",  # "tokens" in fixtures are fake by construction
+    "SLF001", # reaching into internals is how you test them
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

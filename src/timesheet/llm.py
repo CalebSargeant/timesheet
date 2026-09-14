@@ -19,6 +19,8 @@ import logging
 import urllib.request
 
 from .config import Config
+from .net import check as net_check
+from .net import open_url
 
 log = logging.getLogger("timesheet.llm")
 
@@ -27,11 +29,9 @@ def make_llm(cfg: Config):
     if not cfg.llm_enabled:
         return None
     system = cfg.strings.llm_system
-    base = cfg.llm_base_url.rstrip("/")
-    if not base.startswith("https://") and "localhost" not in base and "127.0.0.1" not in base:
-        # The key is sent as a bearer token on every call; over plain http that is
-        # a credential on the wire. A local endpoint is the one sane exception.
-        raise ValueError(f"LLM_BASE_URL must be https (or localhost), not {base!r}")
+    # The key is sent as a bearer token on every call; over plain http that is a
+    # credential on the wire. `net.check` allows loopback and nothing else.
+    base = net_check(cfg.llm_base_url.rstrip("/"))
     url = f"{base}/v1/chat/completions"
     key, model, timeout = cfg.llm_api_key, cfg.llm_model, cfg.llm_timeout
     effort = cfg.llm_reasoning_effort
@@ -48,11 +48,11 @@ def make_llm(cfg: Config):
         if effort:  # reasoning models: "low" keeps a one-line label fast and cheap
             payload["reasoning_effort"] = effort
         body = json.dumps(payload).encode()
-        req = urllib.request.Request(url, data=body, headers={
+        req = urllib.request.Request(url, data=body, headers={  # noqa: S310 — opened through net.open_url, which enforces https
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
         })
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with open_url(req, timeout=timeout) as r:
             data = json.load(r)
         text = (data["choices"][0]["message"]["content"] or "").strip()
         return text.splitlines()[0].strip() if text else ""

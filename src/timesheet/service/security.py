@@ -16,7 +16,7 @@ import hmac
 import os
 import time
 
-TOKEN_VERSION = "1"
+VERSION = "1"
 
 
 def _key() -> bytes:
@@ -34,7 +34,7 @@ def _mac(material: str) -> str:
 
 def sign_download(user_id: str, name: str, ttl_seconds: int) -> str:
     exp = int(time.time()) + int(ttl_seconds)
-    return f"{TOKEN_VERSION}.{exp}.{_mac(f'{TOKEN_VERSION}:{user_id}:{name}:{exp}')}"
+    return f"{VERSION}.{exp}.{_mac(f'{VERSION}:{user_id}:{name}:{exp}')}"
 
 
 def verify_download(user_id: str, name: str, token: str) -> bool:
@@ -43,7 +43,7 @@ def verify_download(user_id: str, name: str, token: str) -> bool:
         exp = int(exp_s)
     except (ValueError, AttributeError):
         return False
-    if version != TOKEN_VERSION or exp < time.time():
+    if version != VERSION or exp < time.time():
         return False
     return hmac.compare_digest(sig, _mac(f"{version}:{user_id}:{name}:{exp}"))
 

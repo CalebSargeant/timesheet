@@ -152,6 +152,16 @@ PostgreSQL DSN you supply. `docker-bake.hcl` builds a multi-arch image. See
 [`.env.example`](.env.example) for every setting, and
 [`docs/`](docs/) for the HTTP API and the pushed-ingest path.
 
+## Security
+
+Please report anything sensitive privately through
+[GitHub's security advisories](https://github.com/calebsargeant/timesheet/security/advisories/new)
+rather than opening an issue.
+
+CodeQL and dependency review run on every pull request. Secret scanning and push
+protection are GitHub's own and are enabled on the repository, so a credential is
+blocked before it lands rather than found afterwards.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).

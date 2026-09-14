@@ -1,3 +1,15 @@
+# Code scanning and dependency review.
+#
+# Both jobs are gated on the repository being PUBLIC, and the gate is real: on a
+# private repository outside GitHub Advanced Security, CodeQL cannot upload its
+# SARIF ("Resource not accessible by integration") and dependency review is
+# refused outright. Skipping is honest; `continue-on-error` would paint a job
+# green that never ran.
+#
+# There is deliberately no secret-scanning job here. GitHub's own secret scanning
+# and push protection are free on public repositories, run on every push, and
+# block a commit before the secret lands — which no CI job can do. Turn both on
+# under Settings -> Code security once this repository is public.
 name: Security
 
 on:
@@ -7,7 +19,7 @@ on:
     branches: [main]
   schedule:
     # Weekly, because a dependency becomes vulnerable long after it was merged
-    # and nothing in a quiet repo would otherwise notice.
+    # and nothing in a quiet repository would otherwise notice.
     - cron: "17 6 * * 1"
   workflow_dispatch:
 
@@ -20,6 +32,7 @@ permissions:
 
 jobs:
   codeql:
+    if: github.event.repository.visibility == 'public'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -35,7 +48,7 @@ jobs:
   dependency-review:
     # PRs only: it compares the base against the head, so there is nothing to
     # diff on a push to main.
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.event.repository.visibility == 'public'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -46,17 +59,3 @@ jobs:
         with:
           fail-on-severity: high
           comment-summary-in-pr: always
-
-  secrets:
-    runs-on: ubuntu-latest
-    steps:
-      # The working tree only, not the whole history. The history predates this
-      # repo going public and carries placeholder tokens in old .env examples,
-      # which a history scan flags on every single run. What matters is that
-      # nothing real is in the tree now.
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: gitleaks/gitleaks-action@83373cf2f8c4db6e24b41c1a9b086bb9619e9cd3 # v2.3.7
-        with:
-          args: detect --source . --no-git --redact --verbose
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

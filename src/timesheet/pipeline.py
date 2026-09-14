@@ -140,7 +140,9 @@ def _correspondence(sources: Sources, cfg: Config, win_start: datetime,
     for what, pull in wanted:
         try:
             out.extend(pull())
-        except Exception:  # noqa: BLE001 — a thin week beats no week
+        # Deliberately broad: a collector can fail in as many ways as the network
+        # and a third-party schema allow, and a thin week beats no week.
+        except Exception:
             log.warning("could not read %s; continuing without it", what, exc_info=True)
     return out
 
@@ -156,13 +158,13 @@ def _github(sources: Sources, cfg: Config, since: str, until: str, *,
     if cfg.include_authored:
         try:
             rows += gh.fetch_authored(since, until, client=sources.github)
-        except Exception:  # noqa: BLE001 — a bonus signal, never block the week
+        except Exception:
             log.debug("authored-item fetch failed", exc_info=True)
     # Reviews: a per-PR REST fan-out, so background refresh only.
     if full and cfg.include_reviews:
         try:
             rows += gh.fetch_reviews(since, until, client=sources.github)
-        except Exception:  # noqa: BLE001 — a bonus signal, never block the week
+        except Exception:
             log.debug("review fetch failed", exc_info=True)
     return rows
 
@@ -202,7 +204,7 @@ def build_from_ingest(payload: dict, cfg: Config, sources: Sources | None = None
     sources = sources or Sources.from_env()
     if fetch_commits is None:
         from .collectors import github as gh
-        def fetch_commits(a, b):        # noqa: E306 — a default, not a redefinition
+        def fetch_commits(a, b):
             return gh.fetch_commits(a, b, client=sources.github) if sources.github else []
 
     tz = ZoneInfo(cfg.tz)

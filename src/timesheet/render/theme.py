@@ -22,22 +22,23 @@ CSS = """
  .card{max-width:940px;margin:0 auto 16px;background:var(--card);border:1px solid var(--line);
    border-radius:14px;overflow:hidden}
  .card.narrow{max-width:560px}
- header{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line);
-   flex-wrap:wrap}
+ header{display:flex;align-items:center;gap:12px;padding:16px 20px;flex-wrap:wrap;
+   border-bottom:1px solid var(--line)}
  header .titles{flex:1;min-width:180px}
  header h1{font-size:17px;margin:0}
  .sub{font-size:12px;color:var(--muted);margin-top:2px}
  .who{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
  .who img{width:22px;height:22px;border-radius:50%}
- .periods{display:flex;gap:6px;flex-wrap:wrap;padding:10px 20px;border-bottom:1px solid var(--line);
-   align-items:center}
- .pill{font-size:12.5px;text-decoration:none;color:inherit;padding:5px 11px;border:1px solid var(--line);
-   border-radius:999px;background:none;cursor:pointer;font-family:inherit}
+ .periods{display:flex;gap:6px;flex-wrap:wrap;padding:10px 20px;align-items:center;
+   border-bottom:1px solid var(--line)}
+ .pill{font-size:12.5px;text-decoration:none;color:inherit;padding:5px 11px;
+   border:1px solid var(--line);border-radius:999px;background:none;cursor:pointer;
+   font-family:inherit}
  .pill.active,.pill.go,.pill.primary{background:var(--accent);color:var(--accent-fg);
    border-color:var(--accent)}
  .range{display:inline-flex;align-items:center;gap:6px;margin-left:auto;flex-wrap:wrap}
- .range input[type=date]{font:inherit;padding:4px 8px;border:1px solid var(--line);border-radius:8px;
-   background:var(--card);color:inherit}
+ .range input[type=date]{font:inherit;padding:4px 8px;border-radius:8px;
+   border:1px solid var(--line);background:var(--card);color:inherit}
  .range .sep{color:var(--muted);font-size:12px}
  .gen{font-size:12px;color:var(--muted)}
  .btn{font-size:13px;text-decoration:none;padding:6px 12px;border:1px solid var(--line);

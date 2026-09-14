@@ -34,8 +34,7 @@ def test_a_session_round_trips():
 
 
 def test_a_tampered_session_is_rejected():
-    token = auth.make_session("github.com:1")
-    body, mac = token.split(".", 1)
+    mac = auth.make_session("github.com:1").split(".", 1)[1]
     forged = auth._b64(b'{"uid":"github.com:2","exp":9999999999}') + "." + mac
     assert auth.read_session(forged) is None
 

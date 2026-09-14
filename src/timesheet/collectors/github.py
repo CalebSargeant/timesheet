@@ -26,6 +26,8 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
+from ..net import open_url
+
 log = logging.getLogger(__name__)
 
 CLOAK = "application/vnd.github.cloak-preview+json"      # commit search by author-date
@@ -65,13 +67,13 @@ class GitHub:
         minting a PAT."""
         if not self.token:
             return self._via_gh(path, accept)
-        req = urllib.request.Request(f"{self.api}{path}", headers={
+        req = urllib.request.Request(f"{self.api}{path}", headers={  # noqa: S310 — opened through net.open_url, which enforces https
             "Authorization": f"Bearer {self.token}",
             "Accept": accept,
             "X-GitHub-Api-Version": "2022-11-28",
         })
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:  # noqa: S310
+            with open_url(req, timeout=self.timeout) as r:
                 return json.loads(r.read())
         except urllib.error.HTTPError as e:
             raise GitHubError(f"GitHub {e.code} on {path.split('?')[0]}") from e
@@ -81,7 +83,9 @@ class GitHub:
     def _via_gh(self, path: str, accept: str) -> dict | list:
         gh = os.environ.get("GH_BIN", "gh")
         host = self.host or DOTCOM
-        out = subprocess.run(  # noqa: S603
+        # No shell, and a fixed argv whose only variable parts are a hostname and
+        # an API path — nothing here is interpretable as a shell metacharacter.
+        out = subprocess.run(  # noqa: S603  # nosec B603
             [gh, "api", "--hostname", host, "-H", f"Accept: {accept}", path],
             capture_output=True, text=True, timeout=60, check=False,
         )

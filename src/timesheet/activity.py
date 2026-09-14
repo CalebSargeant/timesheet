@@ -21,6 +21,7 @@ than about the reader's hours.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from itertools import pairwise
 
 from .config import Config, SignalSpec
 from .model import ActivityEvent, ActivitySession
@@ -38,7 +39,7 @@ def session_minutes(stamps: list[datetime], gap_minutes: int, lead_minutes: int)
         return 0.0
     gap, lead = gap_minutes * 60.0, lead_minutes * 60.0
     seconds = lead
-    for prev, cur in zip(ts, ts[1:]):
+    for prev, cur in pairwise(ts):
         delta = cur - prev
         seconds += delta if delta < gap else lead
     return seconds / 60.0
@@ -50,7 +51,7 @@ def cluster(events: list[ActivityEvent], gap_minutes: int) -> list[list[Activity
     if not ordered:
         return []
     out, cur = [], [ordered[0]]
-    for prev, ev in zip(ordered, ordered[1:]):
+    for prev, ev in pairwise(ordered):
         if (ev.ts - prev.ts).total_seconds() / 60.0 <= gap_minutes:
             cur.append(ev)
         else:
@@ -115,7 +116,7 @@ def sessions(events: list[ActivityEvent], spec: SignalSpec, *,
             if whole > 0:
                 credited *= sum(mins(iv) for iv in remaining) / whole
             start, end = remaining[0][0], remaining[-1][1]
-        minutes = int(round(credited))
+        minutes = round(credited)
         if minutes <= 0:
             continue
         subjects = tuple(dict.fromkeys(e.subject for e in group if e.subject))[:4]

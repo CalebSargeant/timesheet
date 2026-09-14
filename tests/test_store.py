@@ -85,10 +85,14 @@ def test_credentials_are_encrypted_at_rest(tmp_path):
 
 
 def test_a_credential_is_unreadable_with_a_different_key(tmp_path, monkeypatch):
+    """AES-GCM authenticates as well as encrypts, so a wrong key is a failed tag
+    check, not a plausible-looking wrong answer."""
+    from cryptography.exceptions import InvalidTag
+
     s = FileStore(str(tmp_path))
     s.put_credential(ALICE, GITHUB, {"access_token": "gho_x"})
     monkeypatch.setenv("SECRET_KEY", "a-completely-different-secret-key-here")
-    with pytest.raises(Exception):
+    with pytest.raises(InvalidTag):
         s.get_credential(ALICE, GITHUB)
 
 

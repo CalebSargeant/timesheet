@@ -1,5 +1,7 @@
 """Getting the week to whoever signs it off: email construction and channel
 choice, with no real SMTP and no real connector."""
+from typing import ClassVar
+
 import pytest
 
 from timesheet import i18n
@@ -27,7 +29,7 @@ def _days():
 
 
 class FakeSMTP:
-    sent: dict = {}
+    sent: ClassVar[dict] = {}
 
     def __init__(self, host, port, timeout=0):
         FakeSMTP.sent = {"host": host, "port": port}

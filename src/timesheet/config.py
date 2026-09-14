@@ -58,7 +58,7 @@ class Config:
 
     tz: str = "UTC"
     workdays: tuple[int, ...] = (0, 1, 2, 3, 4)          # Mon-Fri: the floored "core" days
-    day_start: str = "08:30"                             # normal start; earlier if activity shows it
+    day_start: str = "08:30"                             # normal; earlier if activity shows it
     earliest_start_floor: str = "06:00"                  # but never open the day before this
     # Work past midnight belongs to the day it started: activity before this hour is
     # credited to the previous calendar day (a 01:00 commit is last night's work).
@@ -169,7 +169,7 @@ class Config:
     def with_settings(self, settings: dict) -> Config:
         """Overlay one user's saved settings. Unknown keys are ignored, so a
         setting removed from the model does not break an account that still has it."""
-        known = {f for f in self.__dataclass_fields__}
+        known = set(self.__dataclass_fields__)
         patch = {k: v for k, v in (settings or {}).items() if k in known}
         for seq in ("workdays",):                     # JSON gives lists; the model wants tuples
             if isinstance(patch.get(seq), list):

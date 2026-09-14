@@ -45,6 +45,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..net import InsecureUrl, open_url
+
 log = logging.getLogger(__name__)
 
 CLIENT_ID = os.environ.get("M365_MCP_CLIENT_ID", "08ad6f98-a4f8-4635-bb8d-f1a3044760f0")
@@ -96,16 +98,14 @@ def _urlopen(url: str, *, data: bytes, headers: dict | None = None, timeout: int
     """Open an **https** URL, and nothing else.
 
     Both URLs this module opens are assembled from settings (the connector URL,
-    the tenant) and urllib also speaks file:// and ftp://. Without this check a
-    mistyped or hostile value turns a token request into a local file read whose
-    contents are then posted onward.
+    the tenant), so the scheme check in `net` is what stops a mistyped or hostile
+    value turning a token request into a local file read. Re-raised as McpError
+    so callers have one exception type to catch.
     """
-    if not url.startswith("https://"):
-        raise McpError(f"refusing to open a non-https URL: {url[:60]!r}")
-    req = urllib.request.Request(url, data=data, headers=headers or {})
-    # The scheme is checked immediately above, which is the mitigation both
-    # scanners ask for; the markers keep them from re-reporting it.
-    return urllib.request.urlopen(req, timeout=timeout)  # nosec B310  # nosemgrep
+    try:
+        return open_url(url, data=data, headers=headers, timeout=timeout)
+    except InsecureUrl as e:
+        raise McpError(str(e)) from e
 
 
 def _post_form(url: str, data: dict) -> dict:
@@ -222,7 +222,9 @@ class McpSession:
         if self.on_rotate:
             try:
                 self.on_rotate(fresh)
-            except Exception:  # noqa: BLE001 — persistence failing must not break the read
+            # The caller's persistence, so it can fail in any way at all. The
+            # token in hand still works; what is lost is next time's refresh.
+            except Exception:
                 log.warning("m365-mcp: could not persist the rotated token", exc_info=True)
 
     def access_token(self) -> str:

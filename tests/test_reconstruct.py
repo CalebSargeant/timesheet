@@ -5,6 +5,7 @@ the day is built from real anchors, nothing double-books, no unnatural
 mega-blocks, and a meeting lands where it really was."""
 import json
 from datetime import datetime
+from itertools import pairwise
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -41,7 +42,7 @@ def test_five_workdays(week):
 def test_no_overlaps_and_ordered(week):
     days, _ = week
     for d in days:
-        for a, b in zip(d.blocks, d.blocks[1:]):
+        for a, b in pairwise(d.blocks):
             assert a.end <= b.start, f"overlap on {d.date:%a}: {a.taak} / {b.taak}"
 
 

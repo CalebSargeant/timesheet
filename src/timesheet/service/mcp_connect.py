@@ -89,7 +89,7 @@ def finish(store, user_id: str, *, tenant: str | None = None) -> bool:
     try:
         account = (McpSession(tokens=tokens, tenant=tenant).me()
                    .get("userPrincipalName") or "")
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.debug("could not read the connected Microsoft identity", exc_info=True)
 
     store.put_credential(user_id, MICROSOFT, tokens, account=account)

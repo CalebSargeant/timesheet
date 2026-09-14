@@ -425,8 +425,9 @@ def test_the_calendar_source_is_chosen_explicitly():
 
 
 def test_a_misspelt_source_is_refused_rather_than_defaulted():
+    sources = Sources(calendar="MCP-connector")
     with pytest.raises(ValueError, match="calendar source"):
-        Sources(calendar="MCP-connector").calendar_source
+        _ = sources.calendar_source
 
 
 # --- transport: the failure paths ------------------------------------------

@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from ..net import InsecureUrl, open_url
 from .users import User, defaults, user_id
 
 log = logging.getLogger(__name__)
@@ -252,12 +253,13 @@ def check_csrf(uid: str, token: str | None) -> bool:
 
 def _post_json(url: str, data: dict, *, timeout: int = 20) -> dict:
     body = urllib.parse.urlencode(data).encode()
-    req = urllib.request.Request(url, data=body, headers={"Accept": "application/json"})
-    if not url.startswith("https://"):
-        raise AuthError(f"refusing to post credentials to a non-https URL: {url[:60]!r}")
+    req = urllib.request.Request(  # noqa: S310 — opened through net.open_url
+        url, data=body, headers={"Accept": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+        with open_url(req, timeout=timeout) as r:
             return json.loads(r.read().decode())
+    except InsecureUrl as e:
+        raise AuthError(f"refusing to post credentials to {url[:60]!r}") from e
     except urllib.error.HTTPError as e:
         raise AuthError(f"GitHub returned HTTP {e.code} exchanging the code") from e
     except urllib.error.URLError as e:
@@ -265,16 +267,16 @@ def _post_json(url: str, data: dict, *, timeout: int = 20) -> dict:
 
 
 def _get_json(url: str, token: str, *, timeout: int = 20):
-    req = urllib.request.Request(url, headers={
+    req = urllib.request.Request(url, headers={  # noqa: S310 — opened through net.open_url, which enforces https
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     })
-    if not url.startswith("https://"):
-        raise AuthError(f"refusing to send a token to a non-https URL: {url[:60]!r}")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+        with open_url(req, timeout=timeout) as r:
             return json.loads(r.read().decode())
+    except InsecureUrl as e:
+        raise AuthError(f"refusing to send a token to {url[:60]!r}") from e
     except urllib.error.HTTPError as e:
         raise AuthError(f"GitHub returned HTTP {e.code} for {url.rsplit('/', 1)[-1]}") from e
     except urllib.error.URLError as e:

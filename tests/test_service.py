@@ -39,10 +39,11 @@ def app(monkeypatch, tmp_path):
                         lambda monday, cfg, sources=None, llm=None, full=False:
                         main.__dict__["_fixture_days"](cfg))
 
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
     from timesheet.collectors import normalize_activity, normalize_commits, normalize_meetings
     from timesheet.reconstruct import reconstruct_week
-    from zoneinfo import ZoneInfo
-    from datetime import datetime
 
     def _fixture_days(cfg):
         tz = ZoneInfo(cfg.tz)
@@ -295,8 +296,8 @@ def test_a_completed_sign_in_stores_the_token_encrypted(app, client, monkeypatch
 
 def test_disconnecting_removes_the_token(app, client):
     user = sign_in(app, client)
-    from timesheet.service.store import MICROSOFT
     from timesheet.service import auth
+    from timesheet.service.store import MICROSOFT
     app._store.put_credential(ALICE, MICROSOFT, {"refresh_token": "r"}, account="a@x.invalid")
     client.post("/connect/microsoft/disconnect", data={"csrf": auth.csrf_token(user.id)},
                 follow_redirects=False)

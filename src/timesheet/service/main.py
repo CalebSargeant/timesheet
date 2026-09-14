@@ -22,6 +22,7 @@ the store. There is no route that reads a week without one.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from datetime import date, datetime, timedelta
@@ -153,7 +154,7 @@ def _week_days(user: users.User, cfg: Config, monday: date) -> list[Day]:
     if monday >= _current_monday(cfg):
         try:
             return collect_week(monday, cfg, sources)
-        except Exception:  # noqa: BLE001 — one bad week must not 500 the whole page
+        except Exception:
             log.warning("live week %s failed for %s", monday, user.login, exc_info=True)
             return []
     cached = _store.get_days(user.id, monday)
@@ -161,7 +162,7 @@ def _week_days(user: users.User, cfg: Config, monday: date) -> list[Day]:
         return cached
     try:
         days = collect_week(monday, cfg, sources)
-    except Exception:  # noqa: BLE001 — one bad week must not 500 the whole page
+    except Exception:
         log.warning("week %s failed for %s", monday, user.login, exc_info=True)
         return []
     _store.save(user.id, monday, {}, days)
@@ -274,7 +275,7 @@ def _subtitle(period: Period, days: list[Day]) -> str:
     if not days:
         return period.label
     a, b = days[0].date, days[-1].date
-    return f"{period.label} · {a.day:02d}-{a.month:02d} – {b.day:02d}-{b.month:02d}"
+    return f"{period.label} · {a.day:02d}-{a.month:02d} to {b.day:02d}-{b.month:02d}"
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -348,10 +349,8 @@ def connections(ts_session: str | None = Cookie(default=None),
                 message: str = Query(default=""), error: str = Query(default="")):
     user = _require(ts_session)
     meta = None
-    try:
+    with contextlib.suppress(crypto.CryptoUnavailable):
         meta = _store.credential_meta(user.id, MICROSOFT)
-    except crypto.CryptoUnavailable:
-        pass
     return HTMLResponse(web.connections(
         user, csrf=auth.csrf_token(user.id), github_account=user.login, microsoft=meta,
         can_store=crypto.available(), delivery_line=_delivery_line(user),

@@ -36,7 +36,8 @@ def test_custom_period_and_parse():
     from timesheet.periods import custom_period, parse_date
 
     p = custom_period(date(2026, 7, 1), date(2026, 7, 15))
-    assert (p.key, p.start, p.end, p.is_month) == ("custom", date(2026, 7, 1), date(2026, 7, 15), True)
+    assert (p.key, p.start, p.end, p.is_month) == (
+        "custom", date(2026, 7, 1), date(2026, 7, 15), True)
     rev = custom_period(date(2026, 7, 15), date(2026, 7, 1))   # reversed -> normalized
     assert (rev.start, rev.end) == (date(2026, 7, 1), date(2026, 7, 15))
     assert parse_date("2026-07-01") == date(2026, 7, 1)

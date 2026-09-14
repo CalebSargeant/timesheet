@@ -26,6 +26,7 @@ import contextlib
 import logging
 import os
 from datetime import date, datetime, timedelta
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from fastapi import Cookie, FastAPI, Form, Header, HTTPException, Query, Request, Response
@@ -373,7 +374,7 @@ def connect_microsoft(csrf: str = Form(default=""),
     try:
         pending = mcp_connect.start(_store, user.id)
     except McpError as e:
-        return _redirect(f"/connections?error={esc(str(e)[:120])}")
+        return _redirect(f"/connections?error={quote(str(e)[:300], safe='')}")
     return HTMLResponse(web.device_code(user, csrf=auth.csrf_token(user.id),
                                         **pending.public()))
 
@@ -400,7 +401,7 @@ def finish_microsoft(csrf: str = Form(default=""),
         if mcp_connect.finish(_store, user.id):
             return _redirect("/connections?message=Microsoft+connected")
     except McpError as e:
-        return _redirect(f"/connections?error={esc(str(e)[:120])}")
+        return _redirect(f"/connections?error={quote(str(e)[:300], safe='')}")
     return _redirect("/connections?error=Not+approved+yet+-+try+again")
 
 
@@ -477,7 +478,12 @@ def deliver_now(csrf: str = Form(default=""), ts_session: str | None = Cookie(de
     result = delivery.send(user, days, meta, session=_sources_for(user).m365,
                            public_url=_public_url)
     key = "message" if result.sent else "error"
-    return _redirect(f"/connections?{key}={esc(result.describe())}")
+    # quote(), not esc(): this lands in a QUERY STRING. HTML-escaping turns the
+    # quotes in a connector's JSON error into &quot;, and the & then starts a new
+    # parameter — every error was being cut off at its first quote, which is how
+    # `FORBIDDEN: Missing scope ChatMessage.Send` reached the page as
+    # "teams_create_chat: {".
+    return _redirect(f"/connections?{key}={quote(result.describe(), safe='')}")
 
 
 # --- pushed ingest ---------------------------------------------------------

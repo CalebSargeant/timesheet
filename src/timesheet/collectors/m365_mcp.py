@@ -257,6 +257,41 @@ def fetch_chat(start: datetime, end: datetime, *, sender: str | None = None,
     return out
 
 
+# Sending anything needs a write scope. The connector is granted READ-ONLY
+# delegated permissions — Chat.Read, Mail.Read and friends, with no
+# ChatMessage.Send and no Mail.Send — so a send fails with
+# "FORBIDDEN: Missing scope" at the moment somebody presses the button.
+# Checking up front turns that into a sentence on the settings page.
+SEND_CHAT_SCOPES = ("ChatMessage.Send", "Chat.ReadWrite")
+SEND_MAIL_SCOPES = ("Mail.Send",)
+
+
+def granted_scopes(session: McpSession | None = None) -> list[str]:
+    """The delegated permissions Entra currently grants this connector."""
+    items = _session(session).call("get_granted_scopes").items
+    if not items:
+        return []
+    scopes = items[0].get("grantedScopes") or items[0].get("scopes") or []
+    return [str(s) for s in scopes]
+
+
+def can_send(kind: str, session: McpSession | None = None) -> str:
+    """"" if the connector may send `kind`, else what is missing.
+
+    Never raises: an unreachable connector is reported as such rather than
+    masquerading as a permissions problem.
+    """
+    wanted = SEND_CHAT_SCOPES if kind == "chat" else SEND_MAIL_SCOPES
+    try:
+        have = set(granted_scopes(session))
+    except McpError as e:
+        return f"could not ask Microsoft what this connection may do: {e}"
+    if have & set(wanted):
+        return ""
+    return (f"this Microsoft connection is read-only — it grants no "
+            f"{' or '.join(wanted)}, so it cannot send on your behalf")
+
+
 def me(session: McpSession | None = None) -> dict:
     """The signed-in user, or {} if the connector answered with nothing."""
     return _session(session).me()

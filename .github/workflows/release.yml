@@ -73,9 +73,16 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
       - name: Package and push the chart
+        env:
+          OWNER: ${{ github.repository_owner }}
         run: |
+          # OCI repository names must be lowercase, and
+          # github.repository_owner keeps the account's display
+          # casing (CalebSargeant) - helm rejects that outright with
+          # "invalid reference: invalid repository". The image job is
+          # unaffected, which is why that release reported half-success.
+          owner=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
           helm package charts/timesheet --destination "$RUNNER_TEMP"
           echo "${{ secrets.GITHUB_TOKEN }}" | \
             helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
-          helm push "$RUNNER_TEMP"/timesheet-*.tgz \
-            "oci://ghcr.io/${{ github.repository_owner }}/charts"
+          helm push "$RUNNER_TEMP"/timesheet-*.tgz "oci://ghcr.io/${owner}/charts"

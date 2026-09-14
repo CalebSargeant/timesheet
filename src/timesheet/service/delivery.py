@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from ..render import xlsx as render_xlsx
 from ..timeutil import hm
 from . import email as mailer_mod
+from . import security
 from .users import User
 
 log = logging.getLogger(__name__)
@@ -82,9 +83,13 @@ def send(user: User, days, meta: dict, *, session=None, mailer=None,
     from ..collectors import m365_mcp
     from ..collectors.mcp_client import McpError
 
+    signed_url = ""
+    if public_url:
+        token = security.sign_download(user.id, "timesheet.xlsx", 7 * 24 * 3600)
+        signed_url = f"{public_url}/d/{user.id}/{token}/timesheet.xlsx"
     text = strings.chat_body.format(
         week=meta.get("week_start", ""), total=hm(meta.get("total_minutes", 0)),
-        url=public_url or "")
+        url=signed_url)
     try:
         m365_mcp.send_chat(target, text, session=session)
     except McpError as e:

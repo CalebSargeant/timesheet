@@ -132,6 +132,7 @@ def test_chat_delivery_needs_a_connected_microsoft_account():
 
 
 def test_chat_delivery_sends_through_the_users_own_connection(monkeypatch):
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-for-delivery-tests-long-enough")
     sent = {}
     monkeypatch.setattr("timesheet.collectors.m365_mcp.send_chat",
                         lambda to, text, session=None: sent.update(to=to, text=text) or "chat-1")
@@ -140,7 +141,8 @@ def test_chat_delivery_sends_through_the_users_own_connection(monkeypatch):
     out = delivery.send(user, _days(), META, session=McpSession(tokens={"refresh_token": "r"}),
                         public_url="https://timesheet.example.invalid")
     assert out.sent is True and out.target == "boss@example.invalid"
-    assert "40:00" in sent["text"] and "timesheet.example.invalid" in sent["text"]
+    assert "40:00" in sent["text"]
+    assert "/d/github.com:1/" in sent["text"] and "timesheet.example.invalid" in sent["text"]
 
 
 def test_a_failed_chat_send_is_reported_not_swallowed(monkeypatch):

@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 from . import activity as act
 from .config import Config
 from .model import ActivityEvent, ActivitySession, Block, Commit, Day, FullDayEvent, Meeting
-from .summarize import classify_focus, summarize_block
+from .summarize import classify_focus, summarize_lines
 from .timeutil import Interval, free_intervals, mins, parse_hhmm, resolve_overlaps, snap
 
 # Correspondence that proves someone was at their desk. Mail *arriving* proves
@@ -110,6 +110,55 @@ def full_day(date: datetime, ev: FullDayEvent, cfg: Config) -> Day:
     block = Block(start, start + timedelta(minutes=cfg.full_day_minutes),
                   ev.project, ev.taak, ev.kind)
     return Day(date=date, blocks=[block], dropped_after_hours=0)
+
+
+def _chunks(free: list[Interval], cfg: Config) -> list[Interval]:
+    """Free time cut into fillable pieces, avoiding slivers where possible.
+
+    A short tail is folded back into the piece before it rather than emitted on
+    its own. Nothing is discarded: the quarter of an hour between arriving and
+    the stand-up is real time at a desk, and dropping it would make the day open
+    later than the person actually started.
+    """
+    out: list[Interval] = []
+    for iv in free:
+        pieces = _split(iv, cfg.max_admin_minutes, cfg.snap_minutes)
+        if len(pieces) > 1 and mins(pieces[-1]) < cfg.min_block_minutes:
+            tail = pieces.pop()
+            pieces[-1] = (pieces[-1][0], tail[1])
+        out.extend(pieces)
+    return out
+
+
+def _shares(themes: list[tuple[str, list[str], int]], budget: int) -> list[int]:
+    """How many minutes of the day each theme gets, proportional to its weight.
+
+    Rounded up, so rounding never strands a theme on zero and leaves the last one
+    silently swallowing the whole day.
+    """
+    if not themes:
+        return []
+    total = sum(w for _, _, w in themes) or len(themes)
+    return [max(1, -(-budget * w // total)) for _, _, w in themes]
+
+
+def _merge_repeats(blocks: list[Block], cfg: Config) -> list[Block]:
+    """Fuse adjacent blocks that say exactly the same thing.
+
+    Two consecutive rows with an identical project and task are not two pieces of
+    work, they are one piece the chunker happened to cut in half. Capped at
+    `max_focus_minutes` so merging cannot recreate the mega-block problem.
+    """
+    out: list[Block] = []
+    for b in blocks:
+        prev = out[-1] if out else None
+        if (prev and prev.kind == b.kind and prev.project == b.project
+                and prev.taak == b.taak and prev.end == b.start
+                and (b.end - prev.start).total_seconds() / 60 <= cfg.max_focus_minutes):
+            out[-1] = Block(prev.start, b.end, prev.project, prev.taak, prev.kind)
+        else:
+            out.append(b)
+    return out
 
 
 def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commit],
@@ -197,11 +246,17 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
     # The day's GitHub work themes, clustered PER KIND so PRs, issues, reviews and
     # commits each surface with their own label (Pull requests / Issues / Code review
     # / a commit category) instead of dissolving into one mixed 'Development' session.
-    themes: list[tuple[str, str]] = []
+    # Each theme carries the weight of the session behind it, so a cluster of
+    # fifteen commits gets more of the day than a cluster of one.
+    themes: list[tuple[str, list[str], int]] = []
     for group in (day_commits, day_prs, day_issues, day_reviews):
         for sess in _cluster(group, cfg.session_gap_minutes):
             project = classify_focus(sess, cfg)
-            themes.append((project, summarize_block(sess, project, cfg, llm)))
+            # Enough lines to cover the rows this theme's run could occupy, so a
+            # long afternoon on one theme does not render as the same sentence
+            # three times over.
+            rows = max(1, -(-cfg.max_day_minutes // cfg.max_focus_minutes))
+            themes.append((project, summarize_lines(sess, project, cfg, llm, rows), len(sess)))
 
     # Fill the free time. A chunk that sits where correspondence actually happened
     # is labelled as correspondence; then about `activity_min` of what is left goes
@@ -211,23 +266,40 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
     comms_budget = max(0, min(comms_min, free_total - cfg.admin_floor_minutes))
     coding_budget = max(0, min(round(activity_min),
                                free_total - comms_budget - cfg.admin_floor_minutes))
-    chunks = [p for iv in free
-              for p in _split(iv, cfg.max_admin_minutes, cfg.snap_minutes)
-              if mins(p) >= cfg.snap_minutes]
+    chunks = _chunks(free, cfg)
     admin_tasks = tuple(labels.admin_tasks) or (labels.admin_project,)
+    # Each theme gets one contiguous run of the day, sized by its weight. Cycling
+    # per chunk instead produced Development/Security/Development/Security down
+    # the whole afternoon — which is not what anyone's day looks like, and made
+    # the sheet read as generated rather than recorded.
+    shares = _shares(themes, coding_budget)
     fill: list[Block] = []
     spent_comms = spent_focus = 0
     ti = ai = 0
+    in_theme = used_lines = 0
     for a, b in chunks:
+        # A piece too short to be a real sitting of anything gets the generic
+        # label. `min_block_minutes` was declared and never read, which is how a
+        # fifteen-minute gap between two meetings came out as a lone
+        # "Development" row — an obvious piece of padding on an otherwise
+        # defensible sheet.
+        substantial = mins((a, b)) >= cfg.min_block_minutes
         here = [s for s in comms if a < s.end + timedelta(minutes=1) and s.start < b]
-        if here and spent_comms < comms_budget:
+        if here and substantial and spent_comms < comms_budget:
             project, taak = act.label(here[0], cfg)
             spent_comms += mins((a, b))
             fill.append(Block(a, b, project, taak,
                               "chat" if here[0].kind == "chat" else "email"))
-        elif themes and spent_focus < coding_budget:
-            project, taak = themes[ti % len(themes)]
-            ti += 1
+        elif themes and substantial and spent_focus < coding_budget:
+            # Move on once this theme has had its share, so themes come out as
+            # runs rather than interleaved.
+            while ti < len(themes) - 1 and in_theme >= shares[ti]:
+                ti += 1
+                in_theme = used_lines = 0
+            project, lines, _ = themes[ti]
+            taak = lines[used_lines % len(lines)]
+            used_lines += 1
+            in_theme += mins((a, b))
             spent_focus += mins((a, b))
             fill.append(Block(a, b, project, taak, "focus"))
         else:
@@ -235,6 +307,8 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
             fill.append(Block(a, b, labels.admin_project, admin_tasks[ai % len(admin_tasks)],
                               "admin"))
             ai += 1
+
+    fill = _merge_repeats(fill, cfg)
 
     blocks = sorted(anchors + fill, key=lambda b: b.start)
     return Day(date=date, blocks=blocks, dropped_after_hours=0)

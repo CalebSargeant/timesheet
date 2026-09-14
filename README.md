@@ -1,3 +1,5 @@
+<img src="assets/logo.png" alt="" width="96" align="left" hspace="12">
+
 # timesheet
 
 Fills in your timesheet from what you already did, so you never do it by hand.
@@ -81,9 +83,18 @@ Server's equivalent), with:
 - **Homepage URL** — your `PUBLIC_URL`
 - **Authorization callback URL** — `<PUBLIC_URL>/auth/callback`
 
-For a GitHub Enterprise Server, register the app on the Enterprise Server itself
-and set `GITHUB_HOST` to its hostname. Nothing else changes: the only difference
-between github.com and GHES here is which hostnames get called.
+Set `GITHUB_HOST` for anything that isn't github.com, and register the OAuth app
+on that same host. Three flavours are handled, and they are genuinely different:
+
+| `GITHUB_HOST` | What it is | API it calls |
+| --- | --- | --- |
+| `github.com` *(default)* | public GitHub | `api.github.com` |
+| `acme.ghe.com` | Enterprise Cloud with data residency | `api.acme.ghe.com` |
+| `github.acme.internal` | Enterprise Server, self-hosted | `github.acme.internal/api/v3` |
+
+The middle one is worth calling out: a `.ghe.com` tenant looks like a private
+hostname but is GitHub-operated and has no `/api/v3` on it, so treating it as an
+Enterprise Server silently returns nothing at all.
 
 ### Connecting Microsoft
 

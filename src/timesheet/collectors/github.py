@@ -34,6 +34,48 @@ CLOAK = "application/vnd.github.cloak-preview+json"      # commit search by auth
 JSON_ACCEPT = "application/vnd.github+json"
 DOTCOM = "github.com"
 
+# GitHub Enterprise Cloud with data residency. These are GitHub-operated, not
+# self-hosted, and they do NOT serve /api/v3 — see `api_base`.
+RESIDENCY_SUFFIX = ".ghe.com"
+
+
+def normalize_host(host: str) -> str:
+    """A bare hostname: no scheme, no trailing slash, lower-cased."""
+    return (host or "").strip().lower().removeprefix("https://").removeprefix(
+        "http://").rstrip("/")
+
+
+def web_base(host: str) -> str:
+    """Where a human signs in. Also the OAuth authorize/token host.
+
+    An `api.` prefix is stripped: somebody who set the host to their API endpoint
+    would otherwise be redirected to sign in at a hostname that serves no sign-in
+    page, and the failure reads as a broken OAuth app rather than a typo.
+    """
+    h = normalize_host(host) or DOTCOM
+    if h == "api.github.com":
+        return f"https://{DOTCOM}"
+    if h.endswith(RESIDENCY_SUFFIX):
+        h = h.removeprefix("api.")
+    return f"https://{h}"
+
+
+def api_base(host: str) -> str:
+    """The REST base for a host. Three shapes, and conflating them 404s every call:
+
+      github.com                -> https://api.github.com
+      <tenant>.ghe.com          -> https://api.<tenant>.ghe.com   (Enterprise Cloud
+                                   with data residency: GitHub-operated, and there
+                                   is no /api/v3 on it)
+      anything else             -> https://<host>/api/v3          (Enterprise Server)
+    """
+    h = normalize_host(host)
+    if h in (DOTCOM, "api.github.com", ""):
+        return "https://api.github.com"
+    if h.endswith(RESIDENCY_SUFFIX):
+        return f"https://{h}" if h.startswith("api.") else f"https://api.{h}"
+    return f"https://{h}/api/v3"
+
 
 class GitHubError(RuntimeError):
     """GitHub could not be reached, or refused the request."""
@@ -49,17 +91,11 @@ class GitHub:
 
     @property
     def api(self) -> str:
-        """github.com serves its API from a separate hostname; GHES serves it
-        from /api/v3 on the same one. Getting this wrong 404s every call."""
-        host = self.host.strip().lower().removeprefix("https://").rstrip("/")
-        if host in (DOTCOM, "api.github.com", ""):
-            return "https://api.github.com"
-        return f"https://{host}/api/v3"
+        return api_base(self.host)
 
     @property
     def web(self) -> str:
-        host = self.host.strip().lower().removeprefix("https://").rstrip("/") or DOTCOM
-        return f"https://{host}"
+        return web_base(self.host)
 
     def get(self, path: str, *, accept: str = JSON_ACCEPT) -> dict | list:
         """One authenticated GET. Falls back to an already-signed-in `gh` CLI when

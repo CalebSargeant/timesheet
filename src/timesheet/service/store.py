@@ -52,6 +52,22 @@ def _is_current(meta: dict | None) -> bool:
     return bool(meta) and meta.get("logic_version") == RECONSTRUCT_VERSION
 
 
+def _usable(days: list | None) -> bool:
+    """Is this cached week worth serving?
+
+    An EMPTY week is never cached as an answer. Everybody signs in before they
+    connect anything, so their first page view reconstructs every recent week
+    from no sources at all and gets nothing — and caching that froze their whole
+    history blank permanently, because a stored `[]` is not None and the current
+    logic version matches. Connecting Microsoft afterwards changed nothing.
+
+    Recomputing a genuinely empty week (a fortnight of leave, or before somebody
+    joined) costs one cheap pass and still comes back empty. Serving a wrong
+    empty one costs somebody their timesheet.
+    """
+    return bool(days)
+
+
 def _safe(user_id: str) -> str:
     """A user id as a single filesystem-safe path segment.
 
@@ -175,7 +191,7 @@ class FileStore:
         if not p.exists():
             return None
         doc = json.loads(p.read_text())
-        if not _is_current(doc.get("meta")):
+        if not _is_current(doc.get("meta")) or not _usable(doc.get("days")):
             return None
         return [Day.from_dict(x) for x in doc["days"]]
 
@@ -365,9 +381,10 @@ class PgStore:
                 (user_id, monday)).fetchone()
         if not row or row[0] is None:
             return None
-        if not _is_current(self._json(row[1])):
+        raw = self._json(row[0])
+        if not _is_current(self._json(row[1])) or not _usable(raw):
             return None
-        return [Day.from_dict(x) for x in self._json(row[0])]
+        return [Day.from_dict(x) for x in raw]
 
     def is_full(self, user_id: str, monday: date) -> bool:
         with self._conn() as c:

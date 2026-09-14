@@ -165,7 +165,11 @@ def _week_days(user: users.User, cfg: Config, monday: date) -> list[Day]:
     except Exception:
         log.warning("week %s failed for %s", monday, user.login, exc_info=True)
         return []
-    _store.save(user.id, monday, {}, days)
+    if days:
+        # Never cache an empty week. Reaching here with nothing usually means the
+        # account has not connected anything yet, not that the week was empty —
+        # and a cached blank would outlive the connection that fixes it.
+        _store.save(user.id, monday, {}, days)
     return days
 
 

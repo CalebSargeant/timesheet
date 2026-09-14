@@ -351,10 +351,12 @@ def connections(ts_session: str | None = Cookie(default=None),
     meta = None
     with contextlib.suppress(crypto.CryptoUnavailable):
         meta = _store.credential_meta(user.id, MICROSOFT)
+    channel, _ = delivery.target_for(user)
+    blocked = delivery.unavailable(channel, session=_sources_for(user).m365)
     return HTMLResponse(web.connections(
         user, csrf=auth.csrf_token(user.id), github_account=user.login, microsoft=meta,
         can_store=crypto.available(), delivery_line=_delivery_line(user),
-        message=message[:200], error=error[:200]))
+        message=message[:200], error=error[:200], delivery_blocked=blocked))
 
 
 @app.post("/connect/microsoft", response_class=HTMLResponse)

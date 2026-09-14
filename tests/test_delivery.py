@@ -154,3 +154,38 @@ def test_a_failed_chat_send_is_reported_not_swallowed(monkeypatch):
                  manager_chat="boss@example.invalid")
     out = delivery.send(user, _days(), META, session=McpSession(tokens={"refresh_token": "r"}))
     assert out.sent is False and "blocks app messages" in out.reason
+
+
+# --- telling "not configured" apart from "rejected" -------------------------
+
+
+def test_no_mail_server_is_reported_as_such_not_as_a_rejection():
+    """These are different problems with different fixes. Reporting both as a
+    rejection sends people hunting a mail server that was never there."""
+    user = _user(delivery_channel="email", delivery_enabled=True,
+                 manager_email="boss@example.invalid")
+    out = delivery.send(user, _days(), META, mailer=mailer.Mailer())
+    assert out.sent is False
+    assert "no mail server configured" in out.reason
+    assert "rejected" not in out.reason
+
+
+def test_a_configured_server_that_refuses_is_a_rejection(monkeypatch, smtp):
+    def _boom(self, message):
+        raise mailer.MailError("550 relay denied")
+
+    monkeypatch.setattr(mailer.Mailer, "send", _boom)
+    user = _user(delivery_channel="email", delivery_enabled=True,
+                 manager_email="boss@example.invalid")
+    out = delivery.send(user, _days(), META, mailer=smtp)
+    assert out.sent is False and "rejected the message" in out.reason
+
+
+def test_unavailable_names_the_blocker_before_anything_is_sent():
+    assert "no mail server" in delivery.unavailable("email", mailer=mailer.Mailer())
+    assert delivery.unavailable("email", mailer=mailer.Mailer(
+        host="smtp.example.invalid", sender="a@b.invalid")) == ""
+    assert "not connected" in delivery.unavailable("chat", session=None)
+    assert delivery.unavailable("chat",
+                                session=McpSession(tokens={"refresh_token": "r"})) == ""
+    assert delivery.unavailable("none") == ""

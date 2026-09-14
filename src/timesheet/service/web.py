@@ -88,7 +88,7 @@ def _dot(ok: bool) -> str:
 
 def connections(user: User, *, csrf: str, github_account: str, microsoft: dict | None,
                 can_store: bool, delivery_line: str, message: str = "",
-                error: str = "") -> str:
+                error: str = "", delivery_blocked: str = "") -> str:
     ms_ok = bool(microsoft)
     ms_line = (f"Connected as {microsoft.get('account') or 'your Microsoft account'}"
                if ms_ok else "Not connected")
@@ -122,8 +122,14 @@ def connections(user: User, *, csrf: str, github_account: str, microsoft: dict |
           "so it needs no admin and no app registration in your tenant.</p>"
           f'<div class="actions">{ms_actions}</div>'
           "<h3 style='margin:22px 0 6px'>Delivery</h3>"
-          f'<p class="status">{_dot(delivery_line.startswith("Sends"))} {esc(delivery_line)}</p>'
-          '<p class="hint">Change this under Settings. Nothing is ever sent until you '
+          f'<p class="status">'
+          f'{_dot(delivery_line.startswith("Sends") and not delivery_blocked)} '
+          f'{esc(delivery_line)}</p>'
+          # A channel that is switched on but cannot work must not read as
+          # healthy; the failure would otherwise only surface on the button.
+          + (note(f"This will not send: {delivery_blocked}.", "bad")
+             if delivery_blocked else "")
+          + '<p class="hint">Change this under Settings. Nothing is ever sent until you '
           "switch it on.</p>"
           '<div class="actions">'
           f'<form method="post" action="/deliver">'

@@ -1,7 +1,7 @@
-# docker-bake.hcl — build definition consumed by `docker buildx bake` and by the
-# org's Diatreme release action. Its PRESENCE is what makes Diatreme build the
-# image MULTI-ARCH; with only a Dockerfile it builds amd64-only, which then
-# ImagePullBackOffs on the arm64 native-cloud workers (topology.sargeant.co/tier).
+# docker-bake.hcl — the build definition, consumed by `docker buildx bake`.
+#
+# Multi-arch by default: an amd64-only image ImagePullBackOffs on arm64 nodes,
+# which is a confusing way to find out you built for one architecture.
 #
 #   Local single-arch build+load:   docker buildx bake app-local
 #   Multi-arch build (CI/release):  docker buildx bake app
@@ -9,7 +9,7 @@
 
 variable "VERSION" { default = "latest" }
 variable "REGISTRY" { default = "ghcr.io" }
-variable "IMAGE_NAME" { default = "magmamoose/github-timesheet" }
+variable "IMAGE_NAME" { default = "calebsargeant/timesheet" }
 variable "PLATFORMS" { default = "linux/amd64,linux/arm64" }
 
 group "default" {

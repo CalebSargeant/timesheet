@@ -2,23 +2,23 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "gts.fullname" . }}
+  name: {{ include "ts.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "gts.labels" . | nindent 4 }}
+    {{- include "ts.labels" . | nindent 4 }}
 spec:
-  replicas: 1                           # stateless reader; state lives in CNPG
+  replicas: 1                           # stateless reader; state lives in Postgres
   selector:
     matchLabels:
-      {{- include "gts.selectorLabels" . | nindent 6 }}
+      {{- include "ts.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "gts.selectorLabels" . | nindent 8 }}
+        {{- include "ts.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
-      serviceAccountName: {{ include "gts.serviceAccountName" . }}
+      serviceAccountName: {{ include "ts.serviceAccountName" . }}
       {{- with .Values.image.pullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -27,13 +27,13 @@ spec:
         {{- toYaml .Values.securityContext | nindent 8 }}
       containers:
         - name: web
-          image: {{ include "gts.image" . }}
+          image: {{ include "ts.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
               containerPort: 8000
           envFrom:
-            {{- include "gts.envFrom" . | nindent 12 }}
+            {{- include "ts.envFrom" . | nindent 12 }}
           {{- with .Values.extraEnv }}
           env:
             {{- toYaml . | nindent 12 }}

@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import json
 import sys
-import urllib.request
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
+
+from ..net import check as check_url
+from ..net import open_url
 
 _UTC = ZoneInfo("UTC")
 
@@ -33,10 +35,15 @@ def _to_utc_naive(value) -> tuple[str, bool]:
 
 
 def fetch_events(ics_url: str, start: datetime, end: datetime) -> list[dict]:
+    # Checked before anything else happens. The URL comes from a settings form,
+    # so it is precisely the case net.py exists for: `file:///etc/passwd` would
+    # otherwise be read off disk and parsed as a calendar.
+    check_url(ics_url)
+
     import icalendar
     import recurring_ical_events
 
-    with urllib.request.urlopen(ics_url, timeout=30) as r:
+    with open_url(ics_url, timeout=30) as r:
         cal = icalendar.Calendar.from_ical(r.read())
 
     out: list[dict] = []

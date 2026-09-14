@@ -4,24 +4,34 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches-ignore: [main]
+    branches: [main]
   workflow_dispatch:
 
-# A branch with an open PR fires both triggers; supersede the older run on the
-# single self-hosted runner (matches the github-contributions convention).
+# A branch with an open PR fires both triggers; supersede the older run.
 concurrency:
   group: ci-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
-jobs:
-  backend:
-    runs-on: ${{ vars.SELFHOSTED_GITHUB_RUNNER || 'ubuntu-latest' }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+permissions:
+  contents: read
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor and the ceiling of what pyproject claims to support. Both,
+        # because the floor is what people actually have installed and the
+        # ceiling is what breaks first.
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
+          cache: pip
 
       - name: Install
         run: pip install -e ".[dev,service]"
@@ -32,10 +42,24 @@ jobs:
       - name: Pytest
         run: pytest -q
 
+      - name: The offline demo must work on a bare install
+        # The promise in the README: no account, no network, no credentials.
+        # A stray import of a service-only package would break it silently.
+        run: |
+          pip uninstall -y fastapi uvicorn psycopg cryptography python-multipart \
+            icalendar recurring-ical-events
+          python -m timesheet.demo tests/fixtures/week_2026-07-20.json "$RUNNER_TEMP/out"
+          test -s "$RUNNER_TEMP/out/timesheet.xlsx"
+
   chart:
-    runs-on: ${{ vars.SELFHOSTED_GITHUB_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
       - name: Helm lint
-        run: helm lint charts/github-timesheet
+        run: helm lint charts/timesheet --set config.publicUrl=https://example.com
+      - name: Helm template
+        run: |
+          helm template t charts/timesheet \
+            --set config.publicUrl=https://example.com \
+            --set secrets.existingSecretName=timesheet-env > /dev/null

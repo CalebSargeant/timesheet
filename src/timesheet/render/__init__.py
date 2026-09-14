@@ -1,3 +1,3 @@
-from . import html, text, xlsx
+from . import html, text, theme, xlsx
 
-__all__ = ["html", "text", "xlsx"]
+__all__ = ["html", "text", "theme", "xlsx"]

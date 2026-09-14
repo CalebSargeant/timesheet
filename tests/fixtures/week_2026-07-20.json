@@ -1,39 +1,61 @@
 {
-  "_note": "Real data pulled live 2026-07-29 from Caleb's M365 calendar (via MCP) and pinkroccade.ghe.com GHE commit search (via gh CLI). Calendar dateTimes are UTC as returned by Graph; the engine converts to Europe/Amsterdam. GHE commit dates already carry the +02:00 local offset.",
+  "_note": "A synthetic but realistic week, in the exact shapes the collectors emit. Calendar dateTimes are naive UTC, as Graph and ICS both return them; the engine converts to the configured zone. Commit timestamps carry their own local offset, as GitHub returns them. Activity rows are what the MCP mail and chat reads produce.",
+  "tz": "Europe/Amsterdam",
   "week_start": "2026-07-20",
   "meetings": [
-    {"start_utc": "2026-07-20T06:45:00", "end_utc": "2026-07-20T07:30:00", "subject": "!! Daily standup Team Cloud & CS !!", "organizer": "marc.vergunst@pinkroccade.nl", "is_organizer": false, "show_as": "busy", "all_day": false},
-    {"start_utc": "2026-07-20T10:45:00", "end_utc": "2026-07-20T11:00:00", "subject": "Wekelijkse BU-update Samenlevingszaken", "organizer": "PRLG.Samenlevingszaken.Ondersteuning@PinkRoccade.nl", "is_organizer": false, "show_as": "busy", "all_day": false},
+    {"start_utc": "2026-07-20T06:45:00", "end_utc": "2026-07-20T07:30:00", "subject": "!! Daily standup !!", "show_as": "busy", "all_day": false},
+    {"start_utc": "2026-07-20T10:45:00", "end_utc": "2026-07-20T11:00:00", "subject": "Weekly business update", "show_as": "busy", "all_day": false},
 
-    {"start_utc": "2026-07-21T06:45:00", "end_utc": "2026-07-21T07:30:00", "subject": "!! Daily standup Team Cloud & CS !!", "organizer": "marc.vergunst@pinkroccade.nl", "is_organizer": false, "show_as": "busy", "all_day": false},
-    {"start_utc": "2026-07-21T07:00:00", "end_utc": "2026-07-21T08:00:00", "subject": "Cloud Sprint Planning", "organizer": "Alexandru.Cihodaru@tss-yonder.com", "is_organizer": false, "show_as": "busy", "all_day": false},
-    {"start_utc": "2026-07-21T08:00:00", "end_utc": "2026-07-21T08:30:00", "subject": "DevOps Architecture Review", "organizer": "riaan.buijs@pinkroccade.nl", "is_organizer": false, "show_as": "busy", "all_day": false},
-    {"start_utc": "2026-07-21T11:00:00", "end_utc": "2026-07-21T12:00:00", "subject": "K8s", "organizer": "Caleb.sargeant@pinkroccade.nl", "is_organizer": true, "show_as": "busy", "all_day": false},
+    {"start_utc": "2026-07-21T06:45:00", "end_utc": "2026-07-21T07:30:00", "subject": "!! Daily standup !!", "show_as": "busy", "all_day": false},
+    {"start_utc": "2026-07-21T07:00:00", "end_utc": "2026-07-21T08:00:00", "subject": "Sprint planning", "show_as": "busy", "all_day": false},
+    {"start_utc": "2026-07-21T08:00:00", "end_utc": "2026-07-21T08:30:00", "subject": "Architecture review", "show_as": "busy", "all_day": false},
+    {"start_utc": "2026-07-21T11:00:00", "end_utc": "2026-07-21T12:00:00", "subject": "Kubernetes working session", "show_as": "busy", "all_day": false},
 
-    {"start_utc": "2026-07-22T06:45:00", "end_utc": "2026-07-22T07:30:00", "subject": "!! Daily standup Team Cloud & CS !!", "organizer": "marc.vergunst@pinkroccade.nl", "is_organizer": false, "show_as": "busy", "all_day": false},
-    {"start_utc": "2026-07-22T11:00:00", "end_utc": "2026-07-22T12:00:00", "subject": "Weekly sync refinement", "organizer": "Alexandru.Cihodaru@tss-yonder.com", "is_organizer": false, "show_as": "busy", "all_day": false},
-    {"start_utc": "2026-07-22T14:00:00", "end_utc": "2026-07-22T15:00:00", "subject": "Leveraging AI to scan for vulnerabilities", "organizer": "noreply@totalspecificsolutions.s02.eur1.teams-events.com", "is_organizer": false, "show_as": "tentative", "all_day": false},
+    {"start_utc": "2026-07-22T06:45:00", "end_utc": "2026-07-22T07:30:00", "subject": "!! Daily standup !!", "show_as": "busy", "all_day": false},
+    {"start_utc": "2026-07-22T11:00:00", "end_utc": "2026-07-22T12:00:00", "subject": "Backlog refinement", "show_as": "busy", "all_day": false},
+    {"start_utc": "2026-07-22T14:00:00", "end_utc": "2026-07-22T15:00:00", "subject": "Vendor webinar", "show_as": "tentative", "all_day": false},
 
-    {"start_utc": "2026-07-23T00:00:00", "end_utc": "2026-07-24T00:00:00", "subject": "Booking (D / Desk 5.17 / Corners)", "organizer": "notifications@deskbird.com", "is_organizer": false, "show_as": "free", "all_day": true},
-    {"start_utc": "2026-07-23T06:45:00", "end_utc": "2026-07-23T07:30:00", "subject": "!! Daily standup Team Cloud & CS !!", "organizer": "marc.vergunst@pinkroccade.nl", "is_organizer": false, "show_as": "busy", "all_day": false},
+    {"start_utc": "2026-07-23T00:00:00", "end_utc": "2026-07-24T00:00:00", "subject": "Booking (Desk 5.17)", "show_as": "free", "all_day": true},
+    {"start_utc": "2026-07-23T06:45:00", "end_utc": "2026-07-23T07:30:00", "subject": "!! Daily standup !!", "show_as": "busy", "all_day": false},
 
-    {"start_utc": "2026-07-24T06:45:00", "end_utc": "2026-07-24T07:30:00", "subject": "!! Daily standup Team Cloud & CS !!", "organizer": "marc.vergunst@pinkroccade.nl", "is_organizer": false, "show_as": "busy", "all_day": false},
-    {"start_utc": "2026-07-24T12:00:00", "end_utc": "2026-07-24T13:00:00", "subject": "K8s", "organizer": "Caleb.sargeant@pinkroccade.nl", "is_organizer": true, "show_as": "busy", "all_day": false}
+    {"start_utc": "2026-07-24T06:45:00", "end_utc": "2026-07-24T07:30:00", "subject": "!! Daily standup !!", "show_as": "busy", "all_day": false},
+    {"start_utc": "2026-07-24T12:00:00", "end_utc": "2026-07-24T13:00:00", "subject": "Kubernetes working session", "show_as": "busy", "all_day": false}
   ],
   "commits": [
-    {"ts_local": "2026-07-20T11:17:13+02:00", "repo": "prlg-cloud-infra", "message": "Merge pull request #317 from samenlevingszaken/fix/prd-rbac-sargea50-b"},
-    {"ts_local": "2026-07-20T12:15:21+02:00", "repo": "prlg-cloud-infra", "message": "fix(iadmin-prd): drop dangling communicationprocessmanager refs"},
-    {"ts_local": "2026-07-20T14:32:05+02:00", "repo": "prlg-cloud-infra", "message": "fix(github-usage): oauth2-proxy --allowed-group uses bare group name"},
-    {"ts_local": "2026-07-20T16:29:09+02:00", "repo": "prlg-cloud-infra", "message": "feat(github-usage): live GitHub App data source + Teams delivery (#320)"},
-    {"ts_local": "2026-07-20T18:13:55+02:00", "repo": "prlg-cloud-infra", "message": "feat(github-usage): render reports/dashboard in EUR (bump v0.0.10)"},
-    {"ts_local": "2026-07-21T11:02:57+02:00", "repo": "Prlg.iSuite.CommunicationProcessManager", "message": "Merge branch 'dev' into feat/cpm/eurofiber-gitops-deploy"},
-    {"ts_local": "2026-07-21T11:04:53+02:00", "repo": "Prlg.iSuite.CommunicationProcessManager", "message": "Merge pull request #35 from samenlevingszaken/feat/cpm/eurofiber-gitops"},
-    {"ts_local": "2026-07-22T11:48:14+02:00", "repo": "Prlg.iSuite.qa", "message": "ci: keep suspended MS Teams webhook from failing the nightly"},
-    {"ts_local": "2026-07-22T12:38:31+02:00", "repo": "prlg-cloud-infra", "message": "feat(monitoring): kube-prometheus-stack alerting (MS Teams, endpoint probes)"},
-    {"ts_local": "2026-07-22T14:18:10+02:00", "repo": "prlg-cloud-infra", "message": "feat(observability): Thanos long-term storage, Grafana OIDC, KRR->Teams"},
-    {"ts_local": "2026-07-22T14:20:10+02:00", "repo": "prlg-cloud-infra", "message": "refactor(litellm): drop the k8s subdomain from the gateway host (#323)"},
-    {"ts_local": "2026-07-23T13:25:45+02:00", "repo": "prlg-cloud-infra", "message": "fix(ci): docs build authenticates to GHE with the Pinky App token (#324)"},
-    {"ts_local": "2026-07-23T17:54:06+02:00", "repo": "prlg-cloud-infra", "message": "docs(ops): prd-iadmin secret-rotation runbook + ticket/ADR conventions"},
-    {"ts_local": "2026-07-23T22:19:02+02:00", "repo": "prlg-cloud-infra", "message": "feat(security): add security & compliance stack for pr-acc-eurofiber"}
+    {"ts_local": "2026-07-20T11:17:13+02:00", "repo": "cloud-infra", "message": "Merge pull request #317 from example/fix-prod-rbac"},
+    {"ts_local": "2026-07-20T12:15:21+02:00", "repo": "cloud-infra", "message": "fix(prod): drop dangling service references"},
+    {"ts_local": "2026-07-20T14:32:05+02:00", "repo": "cloud-infra", "message": "fix(usage-report): oauth2-proxy --allowed-group uses the bare group name"},
+    {"ts_local": "2026-07-20T16:29:09+02:00", "repo": "cloud-infra", "message": "feat(usage-report): live data source + chat delivery (#320)"},
+    {"ts_local": "2026-07-20T18:13:55+02:00", "repo": "cloud-infra", "message": "feat(usage-report): render the dashboard in EUR"},
+    {"ts_local": "2026-07-21T11:02:57+02:00", "repo": "process-manager", "message": "Merge branch 'dev' into feat/gitops-deploy"},
+    {"ts_local": "2026-07-21T11:04:53+02:00", "repo": "process-manager", "message": "Merge pull request #35 from example/feat-gitops"},
+    {"ts_local": "2026-07-22T11:48:14+02:00", "repo": "platform-qa", "message": "ci: keep a suspended chat webhook from failing the nightly run"},
+    {"ts_local": "2026-07-22T12:38:31+02:00", "repo": "cloud-infra", "message": "feat(monitoring): kube-prometheus-stack alerting and endpoint probes"},
+    {"ts_local": "2026-07-22T14:18:10+02:00", "repo": "cloud-infra", "message": "feat(observability): Thanos long-term storage and Grafana OIDC"},
+    {"ts_local": "2026-07-22T14:20:10+02:00", "repo": "cloud-infra", "message": "refactor(gateway): drop the subdomain from the gateway host (#323)"},
+    {"ts_local": "2026-07-23T13:25:45+02:00", "repo": "cloud-infra", "message": "fix(ci): the docs build authenticates with an app token (#324)"},
+    {"ts_local": "2026-07-23T17:54:06+02:00", "repo": "cloud-infra", "message": "docs(ops): secret-rotation runbook and ADR conventions"},
+    {"ts_local": "2026-07-23T22:19:02+02:00", "repo": "cloud-infra", "message": "feat(security): add the security and compliance stack for acceptance"}
+  ],
+  "activity": [
+    {"ts_utc": "2026-07-20T07:35:00", "kind": "email_sent", "subject": "Re: production RBAC rollout"},
+    {"ts_utc": "2026-07-20T07:52:00", "kind": "email_sent", "subject": "Re: production RBAC rollout"},
+    {"ts_utc": "2026-07-20T08:06:00", "kind": "email_received", "subject": "Change advisory board agenda"},
+    {"ts_utc": "2026-07-20T15:10:00", "kind": "chat"},
+    {"ts_utc": "2026-07-20T15:14:00", "kind": "chat"},
+    {"ts_utc": "2026-07-20T15:21:00", "kind": "chat"},
+
+    {"ts_utc": "2026-07-21T09:05:00", "kind": "email_sent", "subject": "Sprint scope for the gitops migration"},
+    {"ts_utc": "2026-07-21T09:40:00", "kind": "chat"},
+    {"ts_utc": "2026-07-21T13:02:00", "kind": "email_received", "subject": "Re: sprint scope"},
+
+    {"ts_utc": "2026-07-22T06:20:00", "kind": "email_sent", "subject": "Nightly run is green again"},
+    {"ts_utc": "2026-07-22T09:15:00", "kind": "chat"},
+    {"ts_utc": "2026-07-22T09:18:00", "kind": "chat"},
+    {"ts_utc": "2026-07-22T09:22:00", "kind": "chat"},
+    {"ts_utc": "2026-07-22T09:31:00", "kind": "chat"},
+
+    {"ts_utc": "2026-07-24T08:45:00", "kind": "email_sent", "subject": "Runbook review"},
+    {"ts_utc": "2026-07-24T14:05:00", "kind": "chat"}
   ]
 }

@@ -1,9 +1,9 @@
 """The single AI-optional seam.
 
 `summarize_block` turns a cluster of commits into one task line. It is rule-based
-by default and needs no AI. Pass an `llm` callable (prompt:str) -> str — e.g.
-DeepSeek via a LiteLLM proxy — to get polished Dutch labels; any failure falls
-straight back to the deterministic version, so the tool always works offline."""
+by default and needs no AI. Pass an `llm` callable `(prompt: str) -> str` to get
+polished labels in the config's locale; any failure falls straight back to the
+deterministic version, so the tool always works offline."""
 from __future__ import annotations
 
 import re
@@ -27,30 +27,27 @@ def _wb_trunc(s: str, n: int) -> str:
 
 
 def classify_focus(commits: list[Commit], cfg: Config) -> str:
+    labels = cfg.labels
     kinds = {c.kind for c in commits}
     if kinds == {"review"}:
-        return cfg.review_project
+        return labels.review_project
     if kinds == {"pr"}:
-        return cfg.pr_project
+        return labels.pr_project
     if kinds == {"issue"}:
-        return cfg.issue_project
+        return labels.issue_project
     blob = " ".join(c.message.lower() for c in commits)
-    for project, kws in cfg.focus_rules:
+    for key, kws in cfg.focus_rules:
         if any(k in blob for k in kws):
-            return project
-    return cfg.focus_default_project
+            return cfg.focus_category(key)
+    return labels.focus_project
 
 
 def summarize_block(commits: list[Commit], project: str, cfg: Config, llm=None) -> str:
     subjects = [c.message for c in commits]
     if llm is not None:
-        prompt = (
-            "Vat dit werk samen in één korte, professionele Nederlandse taakregel "
-            "(max 10 woorden), zonder commit-jargon of issue-nummers:\n"
-            + "\n".join(f"- {s}" for s in subjects)
-        )
+        items = "\n".join(f"- {s}" for s in subjects)
         try:
-            raw = llm(prompt).strip()
+            raw = llm(cfg.strings.llm_prompt.format(items=items)).strip()
             out = raw.splitlines()[0].strip().strip('"').strip() if raw else ""
             if out:
                 return _wb_trunc(out, 90)

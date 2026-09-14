@@ -1,8 +1,9 @@
-"""Raw collector output -> normalized Meeting/Commit.
+"""Raw collector output -> normalized Meeting / FullDayEvent / Commit / ActivityEvent.
 
-The *shape* consumed here is exactly what the Microsoft Graph calendar collector
-and the GHE commit collector emit (and what tests/fixtures capture from live
-data), so the reconstructor never sees a provider-specific field."""
+The *shape* consumed here is what every collector emits (and what
+tests/fixtures capture from live data), so the reconstructor never sees a
+provider-specific field. Labels come from the config's locale, so the same raw
+week renders in whatever language its owner reads."""
 from __future__ import annotations
 
 import re
@@ -10,7 +11,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from ..config import Config
-from ..model import Commit, FullDayEvent, Meeting
+from ..model import ActivityEvent, Commit, FullDayEvent, Meeting
 
 _UTC = ZoneInfo("UTC")
 
@@ -25,6 +26,7 @@ def _as_utc(s: str) -> datetime:
 
 
 def normalize_meetings(raw: list[dict], cfg: Config, tz: ZoneInfo) -> list[Meeting]:
+    labels = cfg.labels
     out: list[Meeting] = []
     for m in raw:
         if cfg.drop_all_day and m.get("all_day"):
@@ -40,10 +42,10 @@ def normalize_meetings(raw: list[dict], cfg: Config, tz: ZoneInfo) -> list[Meeti
         if end <= start:
             continue
         if any(mk in low for mk in cfg.standup_markers):
-            project, taak = cfg.standup_project, _clean_subject(subj)
+            project = labels.standup_project
         else:
-            project, taak = cfg.meeting_project, _clean_subject(subj)
-        out.append(Meeting(start=start, end=end, project=project, taak=taak))
+            project = labels.meeting_project
+        out.append(Meeting(start=start, end=end, project=project, taak=_clean_subject(subj)))
     out.sort(key=lambda x: x.start)
     return out
 
@@ -51,11 +53,13 @@ def normalize_meetings(raw: list[dict], cfg: Config, tz: ZoneInfo) -> list[Meeti
 def normalize_full_days(raw: list[dict], cfg: Config, tz: ZoneInfo) -> list[FullDayEvent]:
     """All-day BUSY/OOF calendar events, expanded to the local dates they cover.
 
-    Leave lands in Outlook (via AFAS) as an all-day event marked busy — "Leave /
-    Verlof". Both calendar sources give an all-day event midnight bounds with an
-    *exclusive* end, whether that midnight is expressed in UTC (a bare ICS DATE) or
-    local; converting to local first makes the covered dates right either way.
-    All-day items marked 'free' (desk bookings) are not absences and never match."""
+    Leave usually lands in a work calendar as an all-day event marked busy, pushed
+    there by whatever HR system owns it. Every calendar source gives an all-day
+    event midnight bounds with an *exclusive* end, whether that midnight is
+    expressed in UTC (a bare ICS DATE) or local; converting to local first makes
+    the covered dates right either way. All-day items marked 'free' (desk
+    bookings) are not absences and never match."""
+    labels = cfg.labels
     out: list[FullDayEvent] = []
     if not cfg.full_day_owns_day:
         return out
@@ -74,10 +78,10 @@ def normalize_full_days(raw: list[dict], cfg: Config, tz: ZoneInfo) -> list[Full
         last = _as_utc(m["end_utc"]).astimezone(tz).date()      # exclusive
         span = max(1, min((last - first).days, cfg.full_day_max_span))
         cleaned = _clean_subject(subj)
-        blank = cleaned.lower() in cfg.leave_blank_subjects     # 'availability only' ICS
+        blank = cleaned.lower() in cfg.leave_blank_subjects     # 'availability only' calendar
         is_leave = blank or any(mk in low for mk in cfg.leave_markers)
-        project = cfg.leave_project if is_leave else cfg.meeting_project
-        taak = cfg.leave_taak if blank else cleaned
+        project = labels.leave_project if is_leave else labels.meeting_project
+        taak = labels.leave_task if blank else cleaned
         for i in range(span):
             out.append(FullDayEvent(date=first + timedelta(days=i), project=project,
                                     taak=taak, kind="leave" if is_leave else "meeting"))
@@ -95,4 +99,28 @@ def normalize_commits(raw: list[dict], tz: ZoneInfo) -> list[Commit]:
             continue
         out.append(Commit(ts=ts, repo=c.get("repo", "?"), message=msg, kind=kind))
     out.sort(key=lambda x: x.ts)
+    return out
+
+
+def normalize_activity(raw: list[dict], tz: ZoneInfo, kind: str | None = None
+                       ) -> list[ActivityEvent]:
+    """Correspondence timestamps -> ActivityEvent.
+
+    Accepts either of the two stamp names the collectors produce (`ts_utc` for a
+    chat message, `sent_utc` for mail) so one function covers every source, and
+    takes the kind from the row when it carries one — a mixed list of sent and
+    received mail arrives as a single pull.
+    """
+    out: list[ActivityEvent] = []
+    for row in raw:
+        stamp = row.get("ts_utc") or row.get("sent_utc") or row.get("received_utc")
+        if not stamp:
+            continue
+        try:
+            ts = _as_utc(stamp).astimezone(tz)
+        except ValueError:
+            continue
+        out.append(ActivityEvent(ts=ts, kind=row.get("kind") or kind or "chat",
+                                 subject=_clean_subject(row.get("subject") or "")))
+    out.sort(key=lambda e: e.ts)
     return out

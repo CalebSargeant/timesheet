@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ts.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ts.labels" . | nindent 4 }}
+data:
+  # Non-secret runtime config only. SECRET_KEY, the OAuth client secret,
+  # DATABASE_URL, SMTP_PASSWORD and LLM_API_KEY come from the Secret.
+  PUBLIC_URL: {{ required "config.publicUrl must be set - it is the OAuth callback host" .Values.config.publicUrl | quote }}
+  GITHUB_HOST: {{ .Values.config.githubHost | quote }}
+  GITHUB_OAUTH_SCOPES: {{ .Values.config.githubOauthScopes | quote }}
+  ACCESS_POLICY: {{ .Values.config.accessPolicy | quote }}
+  {{- with .Values.config.allowedLogins }}
+  ALLOWED_LOGINS: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.allowedOrgs }}
+  ALLOWED_ORGS: {{ . | quote }}
+  {{- end }}
+  LOCALE: {{ .Values.config.locale | quote }}
+  TZ: {{ .Values.config.tz | quote }}
+  DAY_START: {{ .Values.config.dayStart | quote }}
+  MIN_DAY_MINUTES: {{ .Values.config.minDayMinutes | quote }}
+  DAY_ROLLOVER_HOUR: {{ .Values.config.dayRolloverHour | quote }}
+  ROTA_ENABLED: {{ .Values.config.rotaEnabled | quote }}
+  ROTA_MINUTES: {{ .Values.config.rotaMinutes | quote }}
+  INCLUDE_AFTER_HOURS: {{ .Values.config.includeAfterHours | quote }}
+  INCLUDE_EMAIL: {{ .Values.config.includeEmail | quote }}
+  INCLUDE_CHAT: {{ .Values.config.includeChat | quote }}
+  BACKFILL_WEEKS: {{ .Values.config.backfillWeeks | quote }}
+  DOWNLOAD_TTL_SECONDS: {{ .Values.config.downloadTtlSeconds | quote }}
+  M365_MCP_TOKEN_CACHE: {{ .Values.config.m365McpTokenCache | quote }}
+  LLM_BASE_URL: {{ .Values.config.llm.baseUrl | quote }}
+  LLM_MODEL: {{ .Values.config.llm.model | quote }}
+  LLM_REASONING_EFFORT: {{ .Values.config.llm.reasoningEffort | default "low" | quote }}
+  {{- with .Values.config.email.smtpHost }}
+  SMTP_HOST: {{ . | quote }}
+  {{- end }}
+  SMTP_PORT: {{ .Values.config.email.smtpPort | quote }}
+  SMTP_STARTTLS: {{ .Values.config.email.smtpStartTls | quote }}
+  REPORT_EMAIL_FROM: {{ .Values.config.email.from | quote }}

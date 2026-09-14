@@ -1,10 +1,10 @@
-{{/* Common helpers for the github-timesheet chart. */}}
+{{/* Common helpers for the timesheet chart. */}}
 
-{{- define "gts.name" -}}
+{{- define "ts.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "gts.fullname" -}}
+{{- define "ts.fullname" -}}
 {{- if .Values.fullnameOverride -}}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
@@ -17,49 +17,53 @@
 {{- end -}}
 {{- end -}}
 
-{{- define "gts.chart" -}}
+{{- define "ts.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "gts.labels" -}}
-helm.sh/chart: {{ include "gts.chart" . }}
-{{ include "gts.selectorLabels" . }}
+{{- define "ts.labels" -}}
+helm.sh/chart: {{ include "ts.chart" . }}
+{{ include "ts.selectorLabels" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
-{{- define "gts.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "gts.name" . }}
+{{- define "ts.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "ts.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{- define "gts.serviceAccountName" -}}
+{{- define "ts.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create -}}
-  {{- default (include "gts.fullname" .) .Values.serviceAccount.name -}}
+  {{- default (include "ts.fullname" .) .Values.serviceAccount.name -}}
 {{- else -}}
   {{- default "default" .Values.serviceAccount.name -}}
 {{- end -}}
 {{- end -}}
 
-{{- define "gts.image" -}}
+{{- define "ts.image" -}}
 {{- $tag := default .Chart.AppVersion .Values.image.tag -}}
 {{ .Values.image.repository }}:{{ $tag }}
 {{- end -}}
 
-{{/* Name of the Secret holding the app's secret env vars, or "" when none. */}}
-{{- define "gts.secretName" -}}
+{{/* Name of the Secret holding the app's secret env vars, or "" when none.
+
+Point `secrets.existingSecretName` at whatever your cluster already uses to
+project secrets — External Secrets, Sealed Secrets, the CSI driver, or a Secret
+you made by hand. The chart deliberately does not pick one for you. */}}
+{{- define "ts.secretName" -}}
 {{- if .Values.secrets.existingSecretName -}}
 {{- .Values.secrets.existingSecretName -}}
-{{- else if or .Values.secrets.create .Values.externalSecret.enabled -}}
-{{- printf "%s-env" (include "gts.fullname" .) -}}
+{{- else if .Values.secrets.create -}}
+{{- printf "%s-env" (include "ts.fullname" .) -}}
 {{- end -}}
 {{- end -}}
 
 {{/* envFrom block shared by the Deployment and the CronJob. */}}
-{{- define "gts.envFrom" -}}
+{{- define "ts.envFrom" -}}
 - configMapRef:
-    name: {{ include "gts.fullname" . }}-config
-{{- $secret := include "gts.secretName" . }}
+    name: {{ include "ts.fullname" . }}-config
+{{- $secret := include "ts.secretName" . }}
 {{- if $secret }}
 - secretRef:
     name: {{ $secret }}

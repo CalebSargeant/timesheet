@@ -13,20 +13,20 @@ def _c(msg: str, kind: str = "commit") -> Commit:
 
 def test_classify_non_commit_sessions_by_kind():
     cfg = Config()
-    assert classify_focus([_c("x", "review")], cfg) == cfg.review_project
-    assert classify_focus([_c("x", "pr")], cfg) == cfg.pr_project
-    assert classify_focus([_c("x", "issue")], cfg) == cfg.issue_project
+    assert classify_focus([_c("x", "review")], cfg) == cfg.labels.review_project
+    assert classify_focus([_c("x", "pr")], cfg) == cfg.labels.pr_project
+    assert classify_focus([_c("x", "issue")], cfg) == cfg.labels.issue_project
     assert classify_focus([_c("add ci pipeline")], cfg) == "CI/CD"   # commits still by keyword
 
 
 def test_summary_is_one_clean_complete_phrase():
     cfg = Config()
     commits = [
-        _c("feat(ci): GHE auth via release-runner GitHub App to retire PATs"),
-        _c("ci: expose acc environment to the release runner (#123)"),
+        _c("feat(ci): auth via a release-runner GitHub App to retire PATs"),
+        _c("ci: expose the acceptance environment to the runner (#123)"),
     ]
     out = summarize_block(commits, "CI/CD", cfg)
-    assert out == "GHE auth via release-runner GitHub App to retire PATs"
+    assert out == "auth via a release-runner GitHub App to retire PATs"
     assert ";" not in out          # not a concatenation of several subjects
     assert not out.endswith("…")   # a complete phrase, not truncated mid-thought
 
@@ -39,5 +39,13 @@ def test_summary_falls_back_to_project_when_empty():
 def test_llm_output_is_used_when_provided():
     cfg = Config()
     out = summarize_block([_c("fix: thing")], "Development", cfg,
-                          llm=lambda _p: '"GHE-auth naar GitHub App"\n(details)')
-    assert out == "GHE-auth naar GitHub App"   # quotes + trailing line stripped
+                          llm=lambda _p: '"Moved auth onto a GitHub App"\n(details)')
+    assert out == "Moved auth onto a GitHub App"   # quotes + trailing line stripped
+
+
+def test_the_llm_is_prompted_in_the_configs_own_language():
+    """A Dutch sheet must not come back with an English task line."""
+    seen = []
+    summarize_block([_c("fix: thing")], "Development", Config(locale="nl"),
+                    llm=lambda p: seen.append(p) or "taakregel")
+    assert "Nederlandse" in seen[0]

@@ -120,3 +120,60 @@ def test_a_user_round_trips_through_json():
 def test_a_user_id_pairs_the_host_with_the_account_id():
     assert users.user_id("GitHub.com", 42) == "github.com:42"
     assert users.user_id("ghe.example.invalid", "7") == "ghe.example.invalid:7"
+
+
+# --- a deployment's declared defaults must reach a new account --------------
+#
+# These pass an explicit env dict rather than monkeypatching os.environ, because
+# Windows drops TZ when spawning a process (bash sees it, Python does not) and
+# the test would pass or fail depending on the developer's host. In the Linux
+# container this runs in, TZ arrives normally.
+
+
+def test_a_deployments_env_becomes_the_starting_values():
+    """The chart calls these 'starting values for a new account'. They were
+    hardcoded and ignored the environment entirely, so that comment was untrue
+    and every account was created in UTC no matter what the deployment said."""
+    d = users.defaults({"TZ": "Europe/Amsterdam", "LOCALE": "nl", "DAY_START": "09:00",
+                        "MIN_DAY_MINUTES": "420", "ROTA_ENABLED": "true"})
+    assert d["tz"] == "Europe/Amsterdam"
+    assert d["locale"] == "nl"
+    assert d["day_start"] == "09:00"
+    assert d["min_day_minutes"] == 420
+    assert d["rota_enabled"] is True
+
+
+def test_an_empty_env_leaves_the_built_in_defaults():
+    d = users.defaults({})
+    assert d["tz"] == "UTC" and d["locale"] == "en" and d["day_start"] == "08:30"
+
+
+def test_a_blank_env_var_is_not_a_value():
+    assert users.defaults({"TZ": ""})["tz"] == "UTC"
+
+
+def test_a_typo_in_the_environment_does_not_poison_every_account(caplog):
+    """A bad value here would otherwise be written into every account ever
+    created, and only show up as a crash on their first page load."""
+    import logging
+    with caplog.at_level(logging.WARNING):
+        d = users.defaults({"TZ": "Mars/Olympus_Mons"})
+    assert d["tz"] == "UTC"
+    assert "ignoring TZ" in caplog.text
+
+
+def test_per_person_fields_are_never_pre_set_from_the_environment():
+    """An identity, a manager's address, or whether that person wants anything
+    sent at all are not deployment-wide defaults. Seeding github_user in
+    particular would point every new account at one person's commits."""
+    for name in ("github_user", "manager_email", "manager_chat", "manager_name",
+                 "delivery_channel", "delivery_enabled"):
+        assert users.SETTINGS_BY_NAME[name].env is None, name
+    d = users.defaults({"GITHUB_USER": "someone-else", "MANAGER_EMAIL": "x@y.invalid"})
+    assert d["github_user"] == "" and d["manager_email"] == ""
+
+
+def test_every_env_backed_field_is_validated_like_a_form_value():
+    """Same coercion as the settings page, so the two cannot drift."""
+    d = users.defaults({"MIN_DAY_MINUTES": "999999"})   # out of bounds
+    assert d["min_day_minutes"] == 480

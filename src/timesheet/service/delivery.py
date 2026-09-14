@@ -41,6 +41,26 @@ class Delivery:
         return self.reason or f"not sent ({self.channel})"
 
 
+def unavailable(channel: str, *, mailer=None, session=None) -> str:
+    """Why this channel cannot deliver right now, or "" if it can.
+
+    Checked before anything is rendered or sent, so the Connections page can say
+    plainly that a channel will not work instead of showing it green and failing
+    only when somebody presses the button.
+    """
+    if channel == "email":
+        m = mailer or mailer_mod.Mailer.from_env()
+        if not m.configured:
+            return ("this deployment has no mail server configured "
+                    "(set SMTP_HOST and REPORT_EMAIL_FROM, or deliver over chat instead)")
+        return ""
+    if channel == "chat":
+        if session is None or not session.connected:
+            return "Microsoft is not connected for this account"
+        return ""
+    return ""
+
+
 def target_for(user: User) -> tuple[str, str]:
     """(channel, recipient) for a user, or ('none', '') if they haven't set one."""
     channel = user.setting("delivery_channel")
@@ -68,18 +88,24 @@ def send(user: User, days, meta: dict, *, session=None, mailer=None,
 
     strings = user.strings
     if channel == "email":
+        # "Not configured" and "the server said no" are different problems with
+        # different fixes; reporting both as a rejection sends people hunting a
+        # mail server that was never there.
+        why = unavailable("email", mailer=mailer)
+        if why:
+            return Delivery("email", False, target=target, reason=why)
         ok = mailer_mod.send_weekly(
             render_xlsx.build_week(days, locale=strings), meta,
             to=target, strings=strings, mailer=mailer,
             manager_name=user.setting("manager_name"), sender_name=user.display,
             reply_to=user.email, public_url=public_url)
         return Delivery("email", ok, target=target,
-                        reason="" if ok else "the mail server rejected or could not be reached")
+                        reason="" if ok else "the mail server rejected the message")
 
     # chat
-    if session is None or not session.connected:
-        return Delivery("chat", False, target=target,
-                        reason="Microsoft is not connected for this account")
+    why = unavailable("chat", session=session)
+    if why:
+        return Delivery("chat", False, target=target, reason=why)
     from ..collectors import m365_mcp
     from ..collectors.mcp_client import McpError
 

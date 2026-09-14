@@ -8,18 +8,48 @@ read whose contents are then posted onward, or sent to a model, or parsed as a
 calendar.
 
 So there is exactly one opener, it refuses anything but https, and every
-collector goes through it. Loopback over plain http is the single exception,
-because a developer running something on localhost is not the threat this
-guards against.
+collector goes through it.
+
+Plain http is allowed in exactly one situation: when the host cannot be on the
+public internet. A developer's localhost, and a service inside the cluster this
+is deployed to — `http://litellm.prod-litellm.svc.cluster.local:4000` is the
+motivating case — are not the threat being guarded against, and demanding TLS
+there would have people disable the check wholesale instead. Everything that
+could route over the internet still has to be https.
 """
 from __future__ import annotations
 
+import ipaddress
 import urllib.error
 import urllib.parse
 import urllib.request
 
 ALLOWED = ("https",)
 LOOPBACK = ("localhost", "127.0.0.1", "::1", "[::1]")
+
+# Kubernetes service DNS. A name under .svc resolves only inside the cluster.
+CLUSTER_SUFFIXES = (".svc", ".svc.cluster.local")
+
+
+def is_private(host: str) -> bool:
+    """Is this host unreachable from the public internet?
+
+    True for loopback, for a Kubernetes service name, and for an address in a
+    private or link-local range. Anything that does not parse as an address and
+    is not a cluster name is assumed public — the safe direction to be wrong in.
+    """
+    if not host:
+        return False
+    name = host.strip().lower().strip("[]")
+    if name in LOOPBACK or name == "localhost":
+        return True
+    if name.endswith(CLUSTER_SUFFIXES):
+        return True
+    try:
+        addr = ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    return addr.is_private or addr.is_loopback or addr.is_link_local
 
 
 class InsecureUrl(ValueError):
@@ -36,7 +66,7 @@ def check(url: str) -> str:
         raise InsecureUrl(f"not a URL: {url[:60]!r}") from e
     if parsed.scheme in ALLOWED:
         return url
-    if parsed.scheme == "http" and parsed.hostname in LOOPBACK:
+    if parsed.scheme == "http" and is_private(parsed.hostname or ""):
         return url
     raise InsecureUrl(
         f"refusing to open a non-https URL: {url[:60]!r}")

@@ -30,7 +30,9 @@ def make_llm(cfg: Config):
         return None
     system = cfg.strings.llm_system
     # The key is sent as a bearer token on every call; over plain http that is a
-    # credential on the wire. `net.check` allows loopback and nothing else.
+    # credential on the wire — so `net.check` allows plain http only where the
+    # host cannot be on the public internet (loopback, a Kubernetes service
+    # name, a private address). An in-cluster gateway is the normal case here.
     base = net_check(cfg.llm_base_url.rstrip("/"))
     url = f"{base}/v1/chat/completions"
     key, model, timeout = cfg.llm_api_key, cfg.llm_model, cfg.llm_timeout

@@ -1,4 +1,4 @@
-"""The MCP collector, against captured connector payloads. No network.
+"""The MCP collector and transport, against captured connector payloads. No network.
 
 Shapes here came from live `outlook_calendar_search` / `outlook_email_search` /
 `chat_message_search` responses, stripped of anything identifying. They exist so
@@ -12,6 +12,7 @@ import io
 import json
 import logging
 import pathlib
+import time
 import urllib.error
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -19,11 +20,13 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from timesheet.collectors import m365_mcp, mcp_client, normalize_full_days, normalize_meetings
+from timesheet.collectors.mcp_client import DeviceCode, McpSession
 from timesheet.config import Config
-from timesheet.pipeline import calendar_source, collect_week
+from timesheet.pipeline import Sources, collect_week
 
 UTC = ZoneInfo("UTC")
 AMS = ZoneInfo("Europe/Amsterdam")
+CFG = Config(tz="Europe/Amsterdam")
 
 
 def meeting(day="2026-09-01", start="06:45:00", end="07:30:00", **over):
@@ -58,18 +61,32 @@ def all_day(first="2026-09-03", after="2026-09-04", **over):
     return raw
 
 
+def jwt(expires_at: float, marker: str = "") -> str:
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"exp": expires_at, "m": marker}).encode()).decode()
+    return "h." + payload.strip("=") + ".s"
+
+
+def session(**kw) -> McpSession:
+    """A session with a live token, already handshaken, so tests drive `rpc`."""
+    kw.setdefault("tokens", {"access_token": jwt(9e9)})
+    s = McpSession(**kw)
+    s._ready = True
+    return s
+
+
 @pytest.fixture
 def served(monkeypatch):
     """Serve captured items from `search`, so the collectors run for real."""
 
     def _serve(items, *, notes=(), truncated=False):
-        def _search(_tool, **_kwargs):
+        def _search(_self, _tool, **_kwargs):
             return mcp_client.SearchResult(
                 items=list(items), notes=list(notes), total=len(items), truncated=truncated
             )
 
-        monkeypatch.setattr(mcp_client, "search", _search)
-        monkeypatch.setattr(m365_mcp.mcp_client, "search", _search)
+        monkeypatch.setattr(McpSession, "search", _search)
+        return session()
 
     return _serve
 
@@ -86,124 +103,159 @@ def test_a_timed_event_becomes_the_raw_shape_normalize_expects():
         "all_day": False,
         "show_as": "busy",
     }
-    # And it survives the existing normaliser at the right local time.
-    (m,) = normalize_meetings([got], Config(), AMS)
-    assert m.start == datetime(2026, 9, 1, 8, 45, tzinfo=AMS)
-    assert m.taak == "Daily standup"
+    normalized = normalize_meetings([got], CFG, AMS)
+    assert normalized[0].start.strftime("%H:%M") == "08:45"     # UTC -> local
 
 
 def test_a_cancelled_event_is_dropped():
     assert m365_mcp.normalize_event(meeting(isCancelled=True)) is None
 
 
+def in_zone(zone: str, raw=None) -> dict:
+    raw = dict(raw or meeting())
+    raw["start"] = {"dateTime": "2026-09-01T09:00:00.0000000", "timeZone": zone}
+    raw["end"] = {"dateTime": "2026-09-01T10:00:00.0000000", "timeZone": zone}
+    return raw
+
+
 def test_a_windows_time_zone_name_is_understood():
-    """Graph names zones the Windows way, which ZoneInfo rejects. 08:45 in
-    W. Europe is 06:45 UTC; reading the zone as UTC would move the meeting."""
-    local = meeting(start="08:45:00", end="09:30:00")
-    local["start"]["timeZone"] = "W. Europe Standard Time"
-    local["end"]["timeZone"] = "W. Europe Standard Time"
-    assert m365_mcp.normalize_event(local)["start_utc"] == "2026-09-01T06:45:00"
+    """Graph names zones the Windows way, which ZoneInfo rejects outright."""
+    got = m365_mcp.normalize_event(in_zone("W. Europe Standard Time"))
+    assert got["start_utc"] == "2026-09-01T07:00:00"            # CEST -> UTC
+
+
+def test_an_unknown_time_zone_falls_back_to_utc_with_a_warning(caplog):
+    with caplog.at_level(logging.WARNING):
+        got = m365_mcp.normalize_event(in_zone("Middle Earth"))
+    assert got["start_utc"] == "2026-09-01T09:00:00"
+    assert "unknown time zone" in caplog.text
 
 
 def test_multi_day_leave_covers_every_day_it_spans():
-    """The expensive one. A week of leave is ONE all-day object running to the
-    following Monday. Reading only its start leaves four days to be
-    reconstructed as ordinary 8h working days on a sheet the manager reads."""
-    raw = m365_mcp.normalize_event(all_day(first="2026-09-07", after="2026-09-12"))
-    covered = [e.date.isoformat() for e in normalize_full_days([raw], Config(), AMS)]
-    assert covered == [f"2026-09-{d:02d}" for d in (7, 8, 9, 10, 11)]
+    raw = m365_mcp.normalize_event(all_day(first="2026-09-03", after="2026-09-08"))
+    events = normalize_full_days([raw], CFG, AMS)
+    assert [e.date for e in events] == [date(2026, 9, d) for d in (3, 4, 5, 6, 7)]
+    assert all(e.kind == "leave" for e in events)
 
 
 def test_an_all_day_event_is_never_shifted_by_a_time_zone():
     """A day-long entry on the 3rd is on the 3rd everywhere. Round-tripping its
-    midnight out of a zone ahead of local would move it to the 2nd."""
-    leave = all_day()
-    leave["start"]["timeZone"] = "Tokyo Standard Time"
-    leave["end"]["timeZone"] = "Tokyo Standard Time"
-    (day,) = normalize_full_days([m365_mcp.normalize_event(leave)], Config(), AMS)
-    assert day.date.isoformat() == "2026-09-03"
-    assert day.kind == "leave"
+    midnight through a zone ahead of local would move it to the 2nd, which would
+    misdate every single day of leave."""
+    ahead = dict(all_day())
+    ahead["start"] = {"dateTime": "2026-09-03T00:00:00.0000000", "timeZone": "Asia/Tokyo"}
+    ahead["end"] = {"dateTime": "2026-09-04T00:00:00.0000000", "timeZone": "Asia/Tokyo"}
+    raw = m365_mcp.normalize_event(ahead)
+    assert [e.date for e in normalize_full_days([raw], CFG, AMS)] == [date(2026, 9, 3)]
 
 
 def test_a_one_day_all_day_event_covers_exactly_one_day():
-    """The end is exclusive: 3 Sept 00:00 to 4 Sept 00:00 is one day."""
-    assert len(normalize_full_days([m365_mcp.normalize_event(all_day())], Config(), AMS)) == 1
+    raw = m365_mcp.normalize_event(all_day())
+    assert [e.date for e in normalize_full_days([raw], CFG, AMS)] == [date(2026, 9, 3)]
 
 
 def test_an_all_day_event_with_no_end_still_covers_its_day():
-    lonely = all_day()
-    del lonely["end"]
-    (day,) = normalize_full_days([m365_mcp.normalize_event(lonely)], Config(), AMS)
-    assert day.date.isoformat() == "2026-09-03"
+    no_end = dict(all_day())
+    no_end["end"] = {}
+    raw = m365_mcp.normalize_event(no_end)
+    assert [e.date for e in normalize_full_days([raw], CFG, AMS)] == [date(2026, 9, 3)]
 
 
 def test_working_elsewhere_is_a_working_day_not_leave():
-    """'workingElsewhere' mapped to oof would swallow a normal day as leave."""
-    assert m365_mcp.normalize_event(meeting(showAs="workingElsewhere"))["show_as"] == "busy"
+    """'workingElsewhere' is a normal day somewhere else. Mapping it to 'oof'
+    would swallow the whole day as an absence."""
+    raw = m365_mcp.normalize_event(
+        all_day(subject="Working from the Berlin office", showAs="workingElsewhere"))
+    assert raw["show_as"] == "busy"
+    assert [e.kind for e in normalize_full_days([raw], CFG, AMS)] == ["meeting"]
 
 
 def test_fetch_events_keeps_an_absence_that_started_before_the_window(served):
     """afterDateTime filters on when an event STARTS, so the query reaches back
     and the overlap filter is what decides, not the start."""
-    served([all_day(first="2026-08-31", after="2026-09-05"), meeting(day="2026-09-02")])
+    s = served([all_day(first="2026-08-31", after="2026-09-05"), meeting(day="2026-09-02")])
     start = datetime(2026, 9, 1, tzinfo=AMS)
-    got = m365_mcp.fetch_events(start, start + timedelta(days=7))
+    got = m365_mcp.fetch_events(start, start + timedelta(days=7), session=s)
     assert [m["subject"] for m in got] == ["Leave / Verlof", "!! Daily standup !!"]
 
 
 def test_fetch_events_drops_what_ended_before_the_window(served):
-    served([meeting(day="2026-08-20"), meeting(day="2026-09-02")])
+    s = served([meeting(day="2026-08-20"), meeting(day="2026-09-02")])
     start = datetime(2026, 9, 1, tzinfo=AMS)
-    got = m365_mcp.fetch_events(start, start + timedelta(days=7))
+    got = m365_mcp.fetch_events(start, start + timedelta(days=7), session=s)
     assert [m["start_utc"][:10] for m in got] == ["2026-09-02"]
 
 
 def test_the_calendar_query_is_date_anchored_not_relevance_ranked(monkeypatch):
     seen = {}
 
-    def _search(_tool, **kwargs):
+    def _search(_self, _tool, **kwargs):
         seen.update(kwargs)
         return mcp_client.SearchResult(items=[], notes=[], total=0, truncated=False)
 
-    monkeypatch.setattr(m365_mcp.mcp_client, "search", _search)
+    monkeypatch.setattr(McpSession, "search", _search)
     start = datetime(2026, 9, 1, tzinfo=AMS)
-    m365_mcp.fetch_events(start, start + timedelta(days=7))
+    m365_mcp.fetch_events(start, start + timedelta(days=7), session=session())
     assert seen["order"] == "oldest"
     assert seen["afterDateTime"] < "2026-08-19"   # the look-back for running absences
 
 
-# --- email and Teams -------------------------------------------------------
+# --- mail and chat ---------------------------------------------------------
 
 
 def test_sent_mail_becomes_activity_timestamps(served):
-    served([
-        {"uri": "mail:///m/1", "id": "1", "sentDateTime": "2026-09-02T14:00:37.000Z"},
+    s = served([
+        {"uri": "mail:///m/1", "id": "1", "sentDateTime": "2026-09-02T14:00:37.000Z",
+         "subject": "Re: rollout"},
         {"uri": "mail:///m/2", "id": "2", "sentDateTime": "2026-09-02T14:48:23.000Z"},
     ])
     start = datetime(2026, 9, 1, tzinfo=AMS)
-    got = m365_mcp.fetch_emails(start, start + timedelta(days=7))
-    assert got == [{"ts_utc": "2026-09-02T14:00:37"}, {"ts_utc": "2026-09-02T14:48:23"}]
+    got = m365_mcp.fetch_mail(start, start + timedelta(days=7), sent=True, session=s)
+    assert got == [
+        {"ts_utc": "2026-09-02T14:00:37", "kind": "email_sent", "subject": "Re: rollout"},
+        {"ts_utc": "2026-09-02T14:48:23", "kind": "email_sent", "subject": ""},
+    ]
 
 
-def test_teams_messages_from_other_people_are_not_evidence_of_your_working_day(served):
+def test_received_mail_is_tagged_apart_from_sent(served):
+    """They are worth very different amounts: one is an act, the other is
+    somebody else's send button."""
+    s = served([{"uri": "mail:///m/3", "id": "3",
+                 "receivedDateTime": "2026-09-02T08:00:00.000Z"}])
+    start = datetime(2026, 9, 1, tzinfo=AMS)
+    got = m365_mcp.fetch_mail(start, start + timedelta(days=7), sent=False, session=s)
+    assert got[0]["kind"] == "email_received"
+
+
+def test_chat_messages_from_other_people_are_not_evidence_of_your_working_day(served):
     """The search returns every participant's messages. A colleague's 22:00
-    message would otherwise relabel an evening block as the user's own work."""
-    served([
+    message would otherwise credit the user with an evening of work."""
+    s = served([
         {"uri": "teams:///c/a", "id": "1", "from": {"displayName": "A Colleague"},
          "createdDateTime": "2026-09-02T20:11:44.233Z"},
         {"uri": "teams:///c/a", "id": "2", "from": {"displayName": "The User"},
          "createdDateTime": "2026-09-02T09:36:56.448Z"},
     ])
     start = datetime(2026, 9, 1, tzinfo=AMS)
-    got = m365_mcp.fetch_teams(start, start + timedelta(days=7), sender="The User")
-    assert got == [{"ts_utc": "2026-09-02T09:36:56"}]
+    got = m365_mcp.fetch_chat(start, start + timedelta(days=7), sender="The User", session=s)
+    assert got == [{"ts_utc": "2026-09-02T09:36:56", "kind": "chat"}]
 
 
-def test_the_teams_sender_filter_is_case_insensitive(served):
-    served([{"uri": "teams:///c/a", "id": "1", "from": {"displayName": "the user"},
-             "createdDateTime": "2026-09-02T09:00:00.000Z"}])
+def test_the_chat_sender_filter_is_case_insensitive(served):
+    s = served([{"uri": "teams:///c/a", "id": "1", "from": {"displayName": "the user"},
+                 "createdDateTime": "2026-09-02T09:00:00.000Z"}])
     start = datetime(2026, 9, 1, tzinfo=AMS)
-    assert len(m365_mcp.fetch_teams(start, start + timedelta(days=7), sender="The User")) == 1
+    assert len(m365_mcp.fetch_chat(start, start + timedelta(days=7),
+                                   sender="The User", session=s)) == 1
+
+
+def test_chat_is_skipped_when_the_signed_in_user_is_unknown(monkeypatch):
+    """An unfiltered read would count colleagues' messages as the user's hours.
+    No signal beats a wrong one."""
+    monkeypatch.delenv("M365_MCP_CHAT_SENDER", raising=False)
+    monkeypatch.setattr(McpSession, "me", lambda _self: {})
+    start = datetime(2026, 9, 1, tzinfo=AMS)
+    assert m365_mcp.fetch_chat(start, start + timedelta(days=7), session=session()) == []
 
 
 # --- transport -------------------------------------------------------------
@@ -217,7 +269,7 @@ def rpc_returning(*answers):
     remaining = [{"content": [block(p) for p in a], "isError": False} for a in answers]
     seen = []
 
-    def _rpc(_method, params):
+    def _rpc(_self, _method, params):
         seen.append(params.get("arguments", {}))
         return remaining.pop(0)
 
@@ -225,18 +277,13 @@ def rpc_returning(*answers):
     return _rpc
 
 
-@pytest.fixture(autouse=True)
-def _no_handshake(monkeypatch):
-    monkeypatch.setattr(mcp_client, "_ready", True)
-
-
 def test_the_block_kinds_are_told_apart(monkeypatch):
-    monkeypatch.setattr(mcp_client, "_rpc", rpc_returning([
+    monkeypatch.setattr(McpSession, "rpc", rpc_returning([
         {"searchInfo": {"mode": "per_chat_scan"}},
         {"uri": "teams:///c/a", "id": "1"},
         {"moreResults": True, "nextOffset": 1, "totalResultCount": 9},
     ]))
-    page = mcp_client.call("chat_message_search", query="*")
+    page = session().call("chat_message_search", query="*")
     assert [i["id"] for i in page.items] == ["1"]
     assert page.info["mode"] == "per_chat_scan"
     assert (page.next_offset, page.total) == (1, 9)
@@ -245,9 +292,9 @@ def test_the_block_kinds_are_told_apart(monkeypatch):
 def test_a_prose_note_is_kept_not_dropped(monkeypatch):
     """The chat search prefixes a note when a scan was cut short. Losing it
     turns a partial answer into an apparently complete one."""
-    monkeypatch.setattr(mcp_client, "_rpc", rpc_returning(
+    monkeypatch.setattr(McpSession, "rpc", rpc_returning(
         ["Note: results are partial, the scan hit its time budget."]))
-    page = mcp_client.call("chat_message_search", query="*")
+    page = session().call("chat_message_search", query="*")
     assert "partial" in page.notes[0]
 
 
@@ -255,8 +302,8 @@ def test_an_unrecognised_block_makes_the_answer_partial(monkeypatch):
     """Skipping it silently would make a moved payload look like a quiet week.
     Raising would let one new metadata block break every calendar fetch. It
     becomes a note, which marks the search incomplete."""
-    monkeypatch.setattr(mcp_client, "_rpc", rpc_returning([{"somethingNew": 1}]))
-    page = mcp_client.call("outlook_calendar_search")
+    monkeypatch.setattr(McpSession, "rpc", rpc_returning([{"somethingNew": 1}]))
+    page = session().call("outlook_calendar_search")
     assert page.items == []
     assert "unrecognised" in page.notes[0]
 
@@ -266,65 +313,38 @@ def test_search_pages_to_the_end(monkeypatch):
         [{"uri": "u", "id": "1"}, {"nextOffset": 1, "totalResultCount": 2}],
         [{"uri": "u", "id": "2"}, {"totalResultCount": 2}],
     )
-    monkeypatch.setattr(mcp_client, "_rpc", rpc)
-    found = mcp_client.search("outlook_calendar_search", query="*")
+    monkeypatch.setattr(McpSession, "rpc", rpc)
+    found = session().search("outlook_calendar_search", query="*")
     assert [i["id"] for i in found.items] == ["1", "2"]
     assert [a["offset"] for a in rpc.seen] == [0, 1]
     assert found.complete
 
 
 def test_pagination_that_does_not_advance_raises(monkeypatch):
-    monkeypatch.setattr(mcp_client, "_rpc", rpc_returning(
+    monkeypatch.setattr(McpSession, "rpc", rpc_returning(
         [{"uri": "u", "id": "1"}, {"nextOffset": 0}],
         [{"uri": "u", "id": "1"}, {"nextOffset": 0}],
     ))
     with pytest.raises(mcp_client.McpError, match="did not advance"):
-        mcp_client.search("outlook_calendar_search", query="*")
+        session().search("outlook_calendar_search", query="*")
 
 
-def test_a_cron_run_will_not_stop_to_sign_in(monkeypatch, tmp_path):
-    """A device code blocks until a human types it. The nightly job has none."""
-    monkeypatch.setattr(mcp_client, "CACHE", tmp_path / "absent.json")
-    monkeypatch.setattr(mcp_client, "SEED", "")
-    monkeypatch.setattr(mcp_client, "SEED_JSON", "")
-    with pytest.raises(mcp_client.McpAuthError, match="login"):
-        mcp_client.token()
-
-
-def test_the_token_can_be_seeded_from_an_env_var(monkeypatch, tmp_path):
-    import base64
-    import time
-
-    exp = base64.urlsafe_b64encode(json.dumps({"exp": time.time() + 3600}).encode())
-    monkeypatch.setattr(mcp_client, "CACHE", tmp_path / "run" / "token.json")
-    monkeypatch.setattr(mcp_client, "SEED", "")
-    monkeypatch.setattr(mcp_client, "SEED_JSON", json.dumps(
-        {"access_token": f"h.{exp.decode().strip('=')}.s"}))
-    assert mcp_client.token().startswith("h.")
-
-
-# --- source selection ------------------------------------------------------
-
-
-def test_the_calendar_source_is_chosen_explicitly():
-    assert calendar_source({"M365_SOURCE": "mcp"}) == "mcp"
-    assert calendar_source({"M365_ICS_URL": "https://example.invalid/x.ics"}) == "ics"
-    assert calendar_source({}) == "graph"
-    # An explicit choice beats a leftover ICS url, so a half-finished migration
-    # does not silently keep reading the old source.
-    assert calendar_source({"M365_SOURCE": "mcp", "M365_ICS_URL": "x"}) == "mcp"
-
-
-def test_a_misspelt_source_is_refused_rather_than_defaulted():
-    with pytest.raises(ValueError, match="M365_SOURCE"):
-        calendar_source({"M365_SOURCE": "MCP-connector"})
+def test_an_unconnected_session_will_not_stop_to_sign_in():
+    """A device code blocks until a human types it. A scheduled job has none."""
+    with pytest.raises(mcp_client.McpAuthError, match="sign in again"):
+        McpSession().access_token()
 
 
 def test_a_non_https_url_is_refused():
-    """M365_MCP_URL and M365_MCP_TENANT both come from the environment, and
-    urllib speaks file:// — which would turn a token request into a file read."""
+    """The connector URL and tenant both come from configuration, and urllib
+    speaks file:// — which would turn a token request into a local file read."""
     with pytest.raises(mcp_client.McpError, match="non-https"):
         mcp_client._urlopen("file:///etc/passwd", data=b"", timeout=1)
+
+
+def test_a_tenant_that_is_not_one_path_segment_is_refused():
+    with pytest.raises(ValueError, match="single URL path segment"):
+        mcp_client.authority("evil.example/../../x")
 
 
 def test_every_request_carries_a_fresh_json_rpc_id(monkeypatch):
@@ -335,26 +355,78 @@ def test_every_request_carries_a_fresh_json_rpc_id(monkeypatch):
         raise mcp_client.McpError("stop here")
 
     monkeypatch.setattr(mcp_client, "_urlopen", _capture)
-    monkeypatch.setattr(mcp_client, "token", lambda **_: "t")
+    s = session()
     for _ in range(2):
         with pytest.raises(mcp_client.McpError):
-            mcp_client._rpc("tools/call", {})
+            s.rpc("tools/call", {})
     assert seen[0] != seen[1]
 
 
-def test_teams_is_skipped_when_the_signed_in_user_is_unknown(monkeypatch):
-    """An unfiltered read would count colleagues' messages as the user's hours.
-    No signal beats a wrong one."""
-    monkeypatch.setattr(m365_mcp, "me", dict)
-    monkeypatch.delenv("M365_MCP_TEAMS_SENDER", raising=False)
-    start = datetime(2026, 9, 1, tzinfo=AMS)
-    assert m365_mcp.fetch_teams(start, start + timedelta(days=7)) == []
-
-
 def test_me_survives_an_empty_get_me(monkeypatch):
-    monkeypatch.setattr(mcp_client, "_rpc", rpc_returning([]))
-    monkeypatch.setattr(m365_mcp.mcp_client, "_rpc", rpc_returning([]))
-    assert m365_mcp.me() == {}
+    monkeypatch.setattr(McpSession, "rpc", rpc_returning([]))
+    assert session().me() == {}
+
+
+# --- one session per person ------------------------------------------------
+
+
+def test_two_sessions_never_share_a_token(monkeypatch):
+    seen = []
+
+    def _capture(url, *, data, headers=None, timeout):
+        seen.append(headers["Authorization"])
+        raise mcp_client.McpError("stop")
+
+    monkeypatch.setattr(mcp_client, "_urlopen", _capture)
+    for token in ("alice", "bob"):
+        s = McpSession(tokens={"access_token": jwt(9e9, token)})
+        s._ready = True
+        with pytest.raises(mcp_client.McpError):
+            s.rpc("tools/call", {})
+    assert seen[0] != seen[1]
+
+
+def test_a_rotated_refresh_token_is_handed_to_the_owner(monkeypatch):
+    """Entra replaces the refresh token on every use. Dropping the replacement
+    works for exactly one more read and then dies, ninety days later."""
+    saved = {}
+    monkeypatch.setattr(mcp_client, "_post_form",
+                        lambda *_a: {"access_token": jwt(9e9),
+                                     "refresh_token": "the-new-one"})
+    s = McpSession(tokens={"refresh_token": "the-old-one"}, on_rotate=saved.update)
+    s.access_token()
+    assert saved["refresh_token"] == "the-new-one"
+
+
+def test_a_failing_rotate_callback_does_not_break_the_read(monkeypatch, caplog):
+    def _boom(_fresh):
+        raise OSError("database down")
+
+    monkeypatch.setattr(mcp_client, "_post_form",
+                        lambda *_a: {"access_token": jwt(9e9)})
+    s = McpSession(tokens={"refresh_token": "old"}, on_rotate=_boom)
+    with caplog.at_level(logging.WARNING):
+        assert s.access_token().startswith("h.")
+    assert "could not persist" in caplog.text
+
+
+# --- source selection ------------------------------------------------------
+
+
+def test_the_calendar_source_is_chosen_explicitly():
+    connected = McpSession(tokens={"refresh_token": "r"})
+    assert Sources(calendar="mcp").calendar_source == "mcp"
+    assert Sources(ics_url="https://example.invalid/x.ics").calendar_source == "ics"
+    assert Sources().calendar_source == "none"
+    assert Sources(m365=connected).calendar_source == "mcp"
+    # An explicit choice beats a leftover ICS url, so a half-finished migration
+    # does not silently keep reading the old source.
+    assert Sources(calendar="mcp", ics_url="x").calendar_source == "mcp"
+
+
+def test_a_misspelt_source_is_refused_rather_than_defaulted():
+    with pytest.raises(ValueError, match="calendar source"):
+        Sources(calendar="MCP-connector").calendar_source
 
 
 # --- transport: the failure paths ------------------------------------------
@@ -390,11 +462,6 @@ class FakeResponse:
 
 def http_error(code: int, body: str) -> urllib.error.HTTPError:
     return urllib.error.HTTPError("https://x.invalid", code, "err", {}, io.BytesIO(body.encode()))
-
-
-def jwt(expires_at: float) -> str:
-    payload = base64.urlsafe_b64encode(json.dumps({"exp": expires_at}).encode()).decode()
-    return "h." + payload.strip("=") + ".s"
 
 
 def test_entras_error_body_is_returned_not_discarded(monkeypatch):
@@ -442,7 +509,7 @@ def test_an_unwritable_cache_warns_but_does_not_kill_the_run(monkeypatch, tmp_pa
     monkeypatch.setattr(mcp_client, "SEED_JSON", "")
     monkeypatch.setattr(pathlib.Path, "write_text", _raise_oserror)
     with caplog.at_level(logging.WARNING):
-        mcp_client._save({"access_token": "x"})
+        mcp_client._save_to_cache({"access_token": "x"})
     assert "cannot write" in caplog.text
 
 
@@ -452,100 +519,166 @@ def test_an_unreadable_cache_falls_through_instead_of_crashing(monkeypatch, tmp_
     monkeypatch.setattr(mcp_client, "CACHE", cache)
     monkeypatch.setattr(mcp_client, "SEED", "")
     monkeypatch.setattr(mcp_client, "SEED_JSON", "")
-    with pytest.raises(mcp_client.McpAuthError):
-        mcp_client.token()
+    monkeypatch.setattr(mcp_client, "_default", None)
+    assert mcp_client.default_session().tokens == {}
 
 
-def test_a_rejected_refresh_falls_back_to_a_fresh_sign_in(monkeypatch, tmp_path):
-    cache = tmp_path / "token.json"
-    cache.write_text(json.dumps({"access_token": jwt(0), "refresh_token": "spent"}))
-    monkeypatch.setattr(mcp_client, "CACHE", cache)
-    monkeypatch.setattr(mcp_client, "SEED", "")
-    monkeypatch.setattr(mcp_client, "SEED_JSON", "")
-    monkeypatch.setattr(mcp_client, "_post_form", lambda *_: {"error": "invalid_grant"})
-    monkeypatch.setattr(mcp_client, "_device_code", lambda: {"access_token": jwt(9e9)})
-    assert mcp_client.token(allow_device_code=True).startswith("h.")
+def test_a_rejected_refresh_is_reported_not_retried_forever(monkeypatch, caplog):
+    monkeypatch.setattr(mcp_client, "_post_form", lambda *_a: {"error": "invalid_grant"})
+    s = McpSession(tokens={"access_token": jwt(0), "refresh_token": "spent"})
+    with caplog.at_level(logging.WARNING), pytest.raises(mcp_client.McpAuthError):
+        s.access_token()
+    assert "refresh rejected" in caplog.text
 
 
-def test_the_device_code_flow_polls_until_the_user_finishes(monkeypatch, capsys):
-    answers = [
-        {"user_code": "ABC-123", "verification_uri": "https://x.invalid", "device_code": "d",
-         "expires_in": 900, "interval": 1},
-        {"error": "authorization_pending"},
-        {"error": "slow_down"},
-        {"access_token": jwt(9e9)},
-    ]
-    monkeypatch.setattr(mcp_client, "_post_form", lambda *_: answers.pop(0))
-    monkeypatch.setattr(mcp_client.time, "sleep", lambda _s: None)
-    assert mcp_client._device_code()["access_token"].startswith("h.")
-    assert "ABC-123" in capsys.readouterr().err
+# --- the device-code flow, split for a browser -----------------------------
 
 
-def test_a_refused_device_code_says_why(monkeypatch):
-    monkeypatch.setattr(mcp_client, "_post_form", lambda *_: {
-        "error": "unauthorized_client", "error_description": "not preauthorized"})
-    with pytest.raises(mcp_client.McpAuthError, match="not preauthorized"):
-        mcp_client._device_code()
+def test_a_device_code_is_issued_without_blocking(monkeypatch):
+    monkeypatch.setattr(mcp_client, "_post_form", lambda *_a: {
+        "user_code": "ABC-123", "verification_uri": "https://x.invalid",
+        "device_code": "secret", "expires_in": 900, "interval": 5})
+    pending = mcp_client.start_device_code()
+    assert pending.user_code == "ABC-123"
+    # The device_code is the bearer secret of the pending sign-in and must never
+    # reach a page.
+    assert "secret" not in json.dumps(pending.public())
+
+
+def test_polling_returns_none_while_the_human_has_not_finished(monkeypatch):
+    monkeypatch.setattr(mcp_client, "_post_form",
+                        lambda *_a: {"error": "authorization_pending"})
+    pending = DeviceCode("d", "A", "https://x.invalid", time.time() + 900, 5)
+    assert mcp_client.poll_device_code(pending) is None
 
 
 def test_a_real_sign_in_failure_stops_the_poll(monkeypatch):
-    answers = [
-        {"user_code": "A", "verification_uri": "https://x.invalid", "device_code": "d",
-         "expires_in": 900, "interval": 1},
-        {"error": "expired_token", "error_description": "the code expired"},
-    ]
-    monkeypatch.setattr(mcp_client, "_post_form", lambda *_: answers.pop(0))
-    monkeypatch.setattr(mcp_client.time, "sleep", lambda _s: None)
+    """'Keep polling' on a declined sign-in spins until the tab is closed."""
+    monkeypatch.setattr(mcp_client, "_post_form", lambda *_a: {
+        "error": "authorization_declined", "error_description": "the user said no"})
+    pending = DeviceCode("d", "A", "https://x.invalid", time.time() + 900, 5)
+    with pytest.raises(mcp_client.McpAuthError, match="said no"):
+        mcp_client.poll_device_code(pending)
+
+
+def test_an_expired_code_is_refused_rather_than_polled(monkeypatch):
+    pending = DeviceCode("d", "A", "https://x.invalid", time.time() - 1, 5)
     with pytest.raises(mcp_client.McpAuthError, match="expired"):
-        mcp_client._device_code()
+        mcp_client.poll_device_code(pending)
+
+
+def test_a_refused_device_code_says_why(monkeypatch):
+    monkeypatch.setattr(mcp_client, "_post_form", lambda *_a: {
+        "error": "unauthorized_client", "error_description": "not preauthorized"})
+    with pytest.raises(mcp_client.McpAuthError, match="not preauthorized"):
+        mcp_client.start_device_code()
 
 
 def rpc_transport(monkeypatch, body: str):
-    monkeypatch.setattr(mcp_client, "token", lambda **_: "t")
     monkeypatch.setattr(mcp_client, "_urlopen", lambda *a, **k: FakeResponse(body))
 
 
 def test_an_sse_framed_answer_is_understood(monkeypatch):
     """The server may answer as text/event-stream even when JSON was acceptable."""
     rpc_transport(monkeypatch, 'event: message\ndata: {"result": {"ok": true}}\n\n')
-    assert mcp_client._rpc("tools/list", {}) == {"ok": True}
+    assert session().rpc("tools/list", {}) == {"ok": True}
 
 
 def test_a_json_rpc_error_is_raised_with_its_message(monkeypatch):
     rpc_transport(monkeypatch, json.dumps(
         {"error": {"code": -32602, "message": "Input validation error"}}))
     with pytest.raises(mcp_client.McpError, match="Input validation error"):
-        mcp_client._rpc("tools/call", {})
+        session().rpc("tools/call", {})
 
 
 def test_a_non_json_body_is_not_mistaken_for_an_empty_answer(monkeypatch):
     rpc_transport(monkeypatch, "<html>502 Bad Gateway</html>")
     with pytest.raises(mcp_client.McpError, match="non-JSON"):
-        mcp_client._rpc("tools/call", {})
+        session().rpc("tools/call", {})
 
 
 def test_an_http_error_from_the_connector_is_raised(monkeypatch):
-    monkeypatch.setattr(mcp_client, "token", lambda **_: "t")
     monkeypatch.setattr(mcp_client, "_urlopen", raiser(
         http_error(401, "No valid issuers detected")))
     with pytest.raises(mcp_client.McpError, match="401"):
-        mcp_client._rpc("tools/call", {})
+        session().rpc("tools/call", {})
 
 
 def test_an_unreachable_connector_is_raised(monkeypatch):
-    monkeypatch.setattr(mcp_client, "token", lambda **_: "t")
     monkeypatch.setattr(mcp_client, "_urlopen", raiser(urllib.error.URLError("dns")))
     with pytest.raises(mcp_client.McpError, match="cannot reach"):
-        mcp_client._rpc("tools/call", {})
+        session().rpc("tools/call", {})
 
 
-def test_the_handshake_runs_once_per_process(monkeypatch):
+def test_the_handshake_runs_once_per_session(monkeypatch):
     calls = []
-    monkeypatch.setattr(mcp_client, "_ready", False)
-    monkeypatch.setattr(mcp_client, "_rpc", lambda m, _p: calls.append(m) or {"tools": []})
-    mcp_client.tools()
-    mcp_client.tools()
+    monkeypatch.setattr(McpSession, "rpc",
+                        lambda _s, m, _p: calls.append(m) or {"tools": []})
+    s = McpSession(tokens={"access_token": "t"})
+    s.tools()
+    s.tools()
     assert calls.count("initialize") == 1
+
+
+# --- sending ---------------------------------------------------------------
+
+
+def test_a_chat_message_reuses_an_existing_one_to_one_chat(monkeypatch):
+    sent = {}
+
+    def _search(_self, tool, **_kw):
+        assert tool == "teams_list_chats"
+        return mcp_client.SearchResult(
+            items=[{"id": "chat-1", "members": [{"email": "Boss@example.invalid"}]}],
+            notes=[], total=1, truncated=False)
+
+    def _call(_self, tool, **kw):
+        sent[tool] = kw
+        return mcp_client.Page(items=[{"id": "chat-1"}])
+
+    monkeypatch.setattr(McpSession, "search", _search)
+    monkeypatch.setattr(McpSession, "call", _call)
+    monkeypatch.setattr(McpSession, "tools", lambda _s: [
+        {"name": "teams_send_chat_message",
+         "inputSchema": {"properties": {"chatId": {}, "content": {}}}}])
+
+    chat_id = m365_mcp.send_chat("boss@example.invalid", "hello", session=session())
+    assert chat_id == "chat-1"
+    assert "teams_create_chat" not in sent           # no second chat with the same person
+    assert sent["teams_send_chat_message"] == {"chatId": "chat-1", "content": "hello"}
+
+
+def test_the_send_path_adapts_to_the_connectors_own_argument_names(monkeypatch):
+    """The connector is not a versioned API this project owns. Hard-coding one
+    spelling breaks silently the day it changes."""
+    sent = {}
+    monkeypatch.setattr(McpSession, "search", lambda _s, _t, **_k: mcp_client.SearchResult(
+        items=[], notes=[], total=0, truncated=False))
+    def _call(_self, tool, **kw):
+        sent[tool] = kw
+        return mcp_client.Page(items=[{"id": "new-chat"}])
+
+    monkeypatch.setattr(McpSession, "call", _call)
+    monkeypatch.setattr(McpSession, "tools", lambda _s: [
+        {"name": "teams_create_chat", "inputSchema": {"properties": {"userIds": {}}}},
+        {"name": "teams_send_chat_message",
+         "inputSchema": {"properties": {"conversationId": {}, "body": {}}}}])
+
+    m365_mcp.send_chat("boss@example.invalid", "hi", session=session())
+    assert sent["teams_create_chat"] == {"userIds": ["boss@example.invalid"]}
+    assert sent["teams_send_chat_message"]["conversationId"] == "new-chat"
+    assert sent["teams_send_chat_message"]["body"] == "hi"
+
+
+def test_a_missing_send_tool_is_an_error_not_a_silent_no_op(monkeypatch):
+    monkeypatch.setattr(McpSession, "search", lambda _s, _t, **_k: mcp_client.SearchResult(
+        items=[], notes=[], total=0, truncated=False))
+    monkeypatch.setattr(McpSession, "tools", lambda _s: [])
+    with pytest.raises(mcp_client.McpError, match="does not offer"):
+        m365_mcp.send_chat("boss@example.invalid", "hi", session=session())
+
+
+# --- the CLI ---------------------------------------------------------------
 
 
 def test_cli_arguments_are_coerced_to_their_obvious_types():
@@ -569,14 +702,6 @@ def test_the_cli_prints_one_json_object_per_item(monkeypatch, capsys):
     assert capsys.readouterr().out.count('"id"') == 2
 
 
-def test_the_cli_reports_a_successful_login(monkeypatch, capsys):
-    monkeypatch.setattr(mcp_client, "token", lambda **_: "t")
-    monkeypatch.setattr(mcp_client, "call", lambda _t, **_k: mcp_client.Page(
-        items=[{"displayName": "The User", "jobTitle": "Engineer"}]))
-    assert mcp_client.main(["mcp_client", "login"]) == 0
-    assert "The User" in capsys.readouterr().out
-
-
 def test_an_unknown_cli_command_is_a_usage_error(capsys):
     assert mcp_client.main(["mcp_client"]) == 2
     assert "login" in capsys.readouterr().out
@@ -588,48 +713,51 @@ def test_an_unknown_cli_command_is_a_usage_error(capsys):
 @pytest.fixture
 def mcp_week(monkeypatch):
     """Wire collect_week to the MCP collectors with nothing live behind them."""
-    from timesheet.collectors import ghe
+    from timesheet.collectors import github
 
-    monkeypatch.setenv("M365_SOURCE", "mcp")
-    monkeypatch.setattr(ghe, "fetch_commits", lambda *_a, **_k: [])
-    monkeypatch.setattr(m365_mcp, "fetch_events", lambda *_a: [
+    monkeypatch.setattr(github, "fetch_commits", lambda *_a, **_k: [])
+    monkeypatch.setattr(m365_mcp, "fetch_events", lambda *_a, **_k: [
         m365_mcp.normalize_event(meeting(day="2026-09-01")),
         m365_mcp.normalize_event(meeting(day="2026-09-02")),
     ])
-    called = {"emails": 0, "teams": 0}
+    called = {"sent": 0, "received": 0, "chat": 0}
 
-    def _emails(*_a):
-        called["emails"] += 1
-        # 10:00 local on the Tuesday, inside the morning admin block.
-        return [{"ts_utc": "2026-09-01T08:00:00"}]
+    def _mail(*_a, sent=True, **_k):
+        called["sent" if sent else "received"] += 1
+        # 10:00 local on the Tuesday, inside the morning block.
+        return [{"ts_utc": "2026-09-01T08:00:00", "kind":
+                 "email_sent" if sent else "email_received", "subject": "Re: rollout"}]
 
-    def _teams(*_a, **_k):
-        called["teams"] += 1
+    def _chat(*_a, **_k):
+        called["chat"] += 1
         return []
 
-    monkeypatch.setattr(m365_mcp, "fetch_emails", _emails)
-    monkeypatch.setattr(m365_mcp, "fetch_teams", _teams)
+    monkeypatch.setattr(m365_mcp, "fetch_mail", _mail)
+    monkeypatch.setattr(m365_mcp, "fetch_chat", _chat)
     return called
 
 
-def test_the_web_path_skips_enrichment(mcp_week):
-    """Two extra searches is not a price a page view can pay."""
-    collect_week(date(2026, 9, 1), Config(include_authored=False), full=False)
-    assert mcp_week == {"emails": 0, "teams": 0}
+def _sources():
+    return Sources(m365=McpSession(tokens={"refresh_token": "r"}), calendar="mcp")
 
 
-def test_the_nightly_refresh_relabels_admin_blocks_from_real_activity(mcp_week):
-    days = collect_week(date(2026, 9, 1), Config(include_authored=False, include_reviews=False),
-                        full=True)
-    assert mcp_week == {"emails": 1, "teams": 1}
-    labels = [b.taak for d in days for b in d.blocks if b.kind == "admin"]
-    assert "Mail" in labels
+def test_the_web_path_skips_the_heavy_reads(mcp_week):
+    """Three extra searches is not a price a page view can pay."""
+    collect_week(date(2026, 9, 1), Config(tz="Europe/Amsterdam", include_authored=False),
+                 _sources(), full=False)
+    assert mcp_week == {"sent": 0, "received": 0, "chat": 0}
 
 
-def test_a_broken_enrichment_never_costs_the_week(mcp_week, monkeypatch):
-    """It only ever relabels admin blocks. A generic label is honest; losing an
-    otherwise-correct week of reconstruction over one is not."""
-    monkeypatch.setattr(m365_mcp, "fetch_emails", raiser(RuntimeError("connector down")))
-    days = collect_week(date(2026, 9, 1), Config(include_authored=False, include_reviews=False),
-                        full=True)
-    assert days
+def test_the_scheduled_refresh_reads_mail_and_chat(mcp_week):
+    cfg = Config(tz="Europe/Amsterdam", include_authored=False, include_reviews=False)
+    days = collect_week(date(2026, 9, 1), cfg, _sources(), full=True)
+    assert mcp_week == {"sent": 1, "received": 1, "chat": 1}
+    labels = [b.taak for d in days for b in d.blocks if b.kind == "email"]
+    assert any("rollout" in t for t in labels)
+
+
+def test_a_broken_correspondence_read_never_costs_the_week(mcp_week, monkeypatch):
+    """A thin week beats no week: what cannot be read simply is not credited."""
+    monkeypatch.setattr(m365_mcp, "fetch_mail", raiser(RuntimeError("connector down")))
+    cfg = Config(tz="Europe/Amsterdam", include_authored=False, include_reviews=False)
+    assert collect_week(date(2026, 9, 1), cfg, _sources(), full=True)

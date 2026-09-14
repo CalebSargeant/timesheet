@@ -8,8 +8,9 @@ headlessly by the cron. No admin, no app registration.
     python -m timesheet.collectors.m365_graph login    # one-time, interactive
     python -m timesheet.collectors.m365_graph pull 2026-07-20 2026-07-25
 
-If conditional access blocks device code, use the ICS-publish fallback instead
-(see m365_ics.py / M365_ICS_URL).
+Many tenants block this path outright (`AADSTS65002` / `700016`). Where they do,
+use the MCP connector (`m365_mcp.py`, the richest source) or the ICS-publish
+fallback (`m365_ics.py` / `M365_ICS_URL`).
 """
 from __future__ import annotations
 
@@ -22,17 +23,21 @@ from pathlib import Path
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 # Microsoft first-party public clients. Graph PowerShell (14d82eec-…) is the tidy
-# default, but it is NOT provisioned in every tenant (AADSTS700016 in LOCGOV) — the
-# Azure CLI client (04b07795-…) is far more widely present and is the working
-# default here. Override with M365_CLIENT_ID.
+# default, but it is NOT provisioned in every tenant (AADSTS700016) — the Azure
+# CLI client (04b07795-…) is far more widely present and is the working default
+# here. Override with M365_CLIENT_ID.
 DEFAULT_CLIENT_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"   # Microsoft Azure CLI
 DEFAULT_SCOPES = ["Calendars.Read", "User.Read"]
 
 
 def _tenant() -> str:
-    # A verified domain of the tenant works as the authority segment.
-    upn = os.environ.get("M365_UPN", "sargea50@LOCGOV.NL")
-    return os.environ.get("M365_TENANT") or upn.split("@", 1)[1]
+    """The authority segment: an explicit tenant, the domain of a configured UPN,
+    or 'organizations' so Entra resolves the signer's own home tenant."""
+    explicit = os.environ.get("M365_TENANT")
+    if explicit:
+        return explicit
+    upn = os.environ.get("M365_UPN", "")
+    return upn.split("@", 1)[1] if "@" in upn else "organizations"
 
 
 def _cache_path() -> Path:

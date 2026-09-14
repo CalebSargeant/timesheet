@@ -1,16 +1,23 @@
-"""Calendar, sent mail and Teams activity via the M365 MCP connector.
+"""Calendar, mail and chat via the Microsoft 365 MCP connector.
 
-The third calendar source, alongside `m365_ics` (a published ICS link) and
-`m365_graph` (device-code Graph, which this tenant blocks). It emits exactly the
-raw shapes `normalize.py` and `pipeline.enrich_admin` already consume, so the
-reconstructor never learns where a meeting came from.
+The richest of the three calendar sources, alongside `m365_ics` (a published ICS
+link) and `m365_graph` (device-code Graph, which many tenants block). It emits
+exactly the raw shapes `normalize.py` consumes, so the reconstructor never learns
+where a meeting came from.
+
+What it adds over an ICS link:
+
+  * **Real subjects.** A published calendar set to "availability only" hides
+    every one behind a bare `Busy`.
+  * **No rolling three-month window**, so a backfilled month is not silently empty.
+  * **Mail and chat**, which ICS cannot give at all, and which is what turns a
+    day of meetings-and-no-commits from eight hours of guesswork into eight hours
+    of evidence.
+
+Every function takes an `McpSession`, so a multi-user service reads each person's
+mailbox with that person's own delegated token and nothing else.
 
     python -m timesheet.collectors.m365_mcp 2026-09-01 2026-09-06
-
-It is also the answer to the Power Automate detour. `/api/ingest` exists because
-an ICS link carries meetings and nothing else, so email and Teams activity had
-to be pushed in from outside. Both are readable here directly, which means the
-nightly refresh can enrich its own admin blocks with no flow to maintain.
 """
 from __future__ import annotations
 
@@ -22,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from . import mcp_client
+from .mcp_client import McpError, McpSession
 
 log = logging.getLogger(__name__)
 
@@ -39,9 +47,9 @@ _SHOW_AS = {
     "unknown": "busy",
 }
 
-# Graph names time zones the Windows way, which ZoneInfo does not accept. Only
-# the ones this tenant could plausibly produce; anything else falls back to UTC
-# with a warning, which costs at most a couple of hours on a timed meeting.
+# Graph names time zones the Windows way, which ZoneInfo does not accept.
+# Anything unlisted falls back to UTC with a warning, which costs at most a
+# couple of hours on a timed meeting.
 _WINDOWS_ZONES = {
     "utc": "UTC",
     "w. europe standard time": "Europe/Berlin",
@@ -50,7 +58,25 @@ _WINDOWS_ZONES = {
     "central europe standard time": "Europe/Budapest",
     "central european standard time": "Europe/Warsaw",
     "gtb standard time": "Europe/Bucharest",
+    "e. europe standard time": "Europe/Chisinau",
+    "fle standard time": "Europe/Kiev",
+    "greenwich standard time": "Atlantic/Reykjavik",
+    "eastern standard time": "America/New_York",
+    "central standard time": "America/Chicago",
+    "mountain standard time": "America/Denver",
+    "pacific standard time": "America/Los_Angeles",
+    "south africa standard time": "Africa/Johannesburg",
+    "india standard time": "Asia/Kolkata",
+    "singapore standard time": "Asia/Singapore",
+    "china standard time": "Asia/Shanghai",
+    "tokyo standard time": "Asia/Tokyo",
+    "aus eastern standard time": "Australia/Sydney",
+    "new zealand standard time": "Pacific/Auckland",
 }
+
+
+def _session(session: McpSession | None) -> McpSession:
+    return session or mcp_client.default_session()
 
 
 def _zone(name: str) -> ZoneInfo:
@@ -122,7 +148,8 @@ def normalize_event(raw: dict) -> dict | None:
     }
 
 
-def fetch_events(start: datetime, end: datetime) -> list[dict]:
+def fetch_events(start: datetime, end: datetime, *,
+                 session: McpSession | None = None) -> list[dict]:
     """Calendar events overlapping the window, in normalize.py's raw shape.
 
     The query reaches a fortnight further back than the window because
@@ -130,7 +157,7 @@ def fetch_events(start: datetime, end: datetime) -> list[dict]:
     began the previous Friday is otherwise not returned at all, and the days it
     covers would be reconstructed as ordinary 8h working days.
     """
-    found = mcp_client.search(
+    found = _session(session).search(
         "outlook_calendar_search",
         query="*",
         # Anchors the search to the date range instead of relevance-ranking it,
@@ -149,32 +176,44 @@ def fetch_events(start: datetime, end: datetime) -> list[dict]:
     return out
 
 
-def fetch_emails(start: datetime, end: datetime) -> list[dict]:
-    """Timestamps of mail the user SENT in the window.
+SENT_FOLDER = os.environ.get("M365_MCP_SENT_FOLDER", "Sent Items")
+INBOX_FOLDER = os.environ.get("M365_MCP_INBOX_FOLDER", "Inbox")
 
-    Sent, not received: `enrich_admin` reads these as evidence that the user was
-    at their desk working, and mail arrives whether or not they were. A sent
-    message is an action with a time on it.
+
+def fetch_mail(start: datetime, end: datetime, *, sent: bool = True,
+               session: McpSession | None = None) -> list[dict]:
+    """Timestamps (and subjects) of mail in the window, one folder at a time.
+
+    Sent and received are pulled separately and tagged, because they are worth
+    very different amounts. A message you sent is an action with a time on it. A
+    message that arrived says only that somebody else pressed send — it is
+    evidence of triage at best, which is why `Config.email_received` carries a
+    small lead-in and a hard daily cap.
     """
-    found = mcp_client.search(
+    folder = SENT_FOLDER if sent else INBOX_FOLDER
+    kind = "email_sent" if sent else "email_received"
+    found = _session(session).search(
         "outlook_email_search",
         # The schema forbids combining folderName with a free-text query, so
         # this is date-filtered only.
-        folderName=os.environ.get("M365_MCP_SENT_FOLDER", "Sent Items"),
+        folderName=folder,
         order="oldest",
         afterDateTime=_utc_naive(start),
         beforeDateTime=_utc_naive(end),
     )
     out = []
     for item in found.items:
-        stamp = item.get("sentDateTime") or item.get("receivedDateTime")
+        stamp = (item.get("sentDateTime") if sent else item.get("receivedDateTime")) \
+            or item.get("receivedDateTime") or item.get("sentDateTime")
         if stamp:
-            out.append({"ts_utc": _iso_z(stamp)})
-    log.info("m365-mcp: %d sent emails", len(out))
+            out.append({"ts_utc": _iso_z(stamp), "kind": kind,
+                        "subject": (item.get("subject") or "").strip()})
+    log.info("m365-mcp: %d %s emails", len(out), "sent" if sent else "received")
     return out
 
 
-def fetch_teams(start: datetime, end: datetime, *, sender: str | None = None) -> list[dict]:
+def fetch_chat(start: datetime, end: datetime, *, sender: str | None = None,
+               session: McpSession | None = None) -> list[dict]:
     """Timestamps of Teams messages the user SENT in the window.
 
     The search returns messages from every participant, so it has to be filtered
@@ -185,19 +224,21 @@ def fetch_teams(start: datetime, end: datetime, *, sender: str | None = None) ->
     is filtered again here because the server-side filter on that path is
     documented as best-effort.
 
-    That same scan path only reaches the 50 most recently active chats and the
-    50 newest messages in each, so this is a good signal for the current week
-    and a thin one for a backfilled month. It only ever relabels admin blocks,
-    never their durations, so a thin read costs nothing but a generic label.
+    That same scan path only reaches the most recently active chats and the
+    newest messages in each, so this is a good signal for the current week and a
+    thin one for a backfilled month. A thin read costs hours, not correctness:
+    what it misses simply does not get credited.
     """
-    sender = sender or os.environ.get("M365_MCP_TEAMS_SENDER") or me().get("displayName", "")
+    sess = _session(session)
+    sender = sender or os.environ.get("M365_MCP_CHAT_SENDER") or \
+        sess.me().get("displayName", "")
     if not sender:
         # Without a name there is nothing to filter on, and an unfiltered read
         # would count colleagues' messages as evidence of the user's own hours.
-        # No signal beats a wrong one: admin blocks keep their generic label.
-        log.warning("m365-mcp: cannot tell who the signed-in user is; skipping Teams")
+        # No signal beats a wrong one.
+        log.warning("m365-mcp: cannot tell who the signed-in user is; skipping chat")
         return []
-    found = mcp_client.search(
+    found = sess.search(
         "chat_message_search",
         query="*",
         sender=sender,
@@ -211,15 +252,83 @@ def fetch_teams(start: datetime, end: datetime, *, sender: str | None = None) ->
             continue
         stamp = item.get("createdDateTime")
         if stamp:
-            out.append({"ts_utc": _iso_z(stamp)})
-    log.info("m365-mcp: %d Teams messages from %r", len(out), sender)
+            out.append({"ts_utc": _iso_z(stamp), "kind": "chat"})
+    log.info("m365-mcp: %d chat messages from %r", len(out), sender)
     return out
 
 
-def me() -> dict:
+def me(session: McpSession | None = None) -> dict:
     """The signed-in user, or {} if the connector answered with nothing."""
-    items = mcp_client.call("get_me").items
-    return items[0] if items else {}
+    return _session(session).me()
+
+
+# --- sending -------------------------------------------------------------
+
+# The connector is not a versioned API this project owns, and its argument names
+# have no compatibility promise. Rather than hard-code one spelling and break the
+# day it changes, the send path reads the tool's own input schema and picks
+# whichever of these names it actually offers.
+_ARG_ALIASES = {
+    "chat_id": ("chatId", "chat_id", "conversationId", "id"),
+    "content": ("content", "message", "body", "text"),
+    "members": ("members", "userIds", "participants", "emails", "memberEmails"),
+}
+
+
+def _schema(sess: McpSession, tool: str) -> dict:
+    for t in sess.tools():
+        if t.get("name") == tool:
+            return (t.get("inputSchema") or {}).get("properties") or {}
+    raise McpError(f"the connector does not offer {tool!r}")
+
+
+def _pick(props: dict, role: str) -> str:
+    for name in _ARG_ALIASES[role]:
+        if name in props:
+            return name
+    raise McpError(f"no argument for {role!r} in {sorted(props)}")
+
+
+def send_chat(recipient: str, text: str, *, session: McpSession | None = None) -> str:
+    """Send `text` to one person in Teams. Returns the chat id it landed in.
+
+    Reuses an existing one-to-one chat where the connector lists one, because
+    opening a second chat with the same colleague every week is both untidy and,
+    on some tenants, silently rate-limited.
+    """
+    sess = _session(session)
+    target = recipient.strip().lower()
+    chat_id = ""
+
+    try:
+        for chat in sess.search("teams_list_chats", max_pages=4).items:
+            people = chat.get("members") or chat.get("participants") or []
+            addresses = {
+                str(p.get("email") or p.get("userPrincipalName") or p).strip().lower()
+                for p in people if p
+            }
+            if target in addresses:
+                chat_id = str(chat.get("id") or chat.get("chatId") or "")
+                if chat_id:
+                    break
+    except McpError:
+        log.debug("m365-mcp: could not list chats; creating a new one", exc_info=True)
+
+    if not chat_id:
+        props = _schema(sess, "teams_create_chat")
+        created = sess.call("teams_create_chat", **{_pick(props, "members"): [recipient]})
+        if not created.items:
+            raise McpError("teams_create_chat returned no chat")
+        chat_id = str(created.items[0].get("id") or created.items[0].get("chatId") or "")
+        if not chat_id:
+            raise McpError("teams_create_chat returned a chat with no id")
+
+    props = _schema(sess, "teams_send_chat_message")
+    sess.call("teams_send_chat_message", **{
+        _pick(props, "chat_id"): chat_id,
+        _pick(props, "content"): text,
+    })
+    return chat_id
 
 
 if __name__ == "__main__":
@@ -229,6 +338,7 @@ if __name__ == "__main__":
          if len(sys.argv) > 2 else s + timedelta(days=7))
     print(json.dumps({
         "meetings": fetch_events(s, e),
-        "emails": fetch_emails(s, e),
-        "teams": fetch_teams(s, e),
+        "emails_sent": fetch_mail(s, e, sent=True),
+        "emails_received": fetch_mail(s, e, sent=False),
+        "chat": fetch_chat(s, e),
     }, indent=2))

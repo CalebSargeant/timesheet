@@ -1,5 +1,8 @@
-"""Normalized signals + the reconstructed Block. Collectors emit Meeting/Commit;
-the reconstructor emits Block; the renderers consume Block."""
+"""Normalized signals + the reconstructed Block.
+
+Collectors emit Meeting / FullDayEvent / Commit / ActivityEvent; `activity.py`
+folds the point events into sessions; the reconstructor emits Block; the
+renderers consume Block."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -22,7 +25,7 @@ class FullDayEvent:
     A date, not a moment: an all-day event has no local start time, and the day it
     covers is what the sheet reports."""
     date: _date              # local calendar date
-    project: str             # 'Project / klant' column
+    project: str             # 'Project / client' column
     taak: str                # the calendar subject, cleaned
     kind: str = "leave"      # leave | meeting
 
@@ -32,16 +35,44 @@ class Commit:
     ts: datetime             # tz-aware, local
     repo: str
     message: str             # first line, merges already dropped
-    kind: str = "commit"     # commit | review — a review is a timestamped work event too
+    kind: str = "commit"     # commit | review | pr | issue
+
+
+@dataclass
+class ActivityEvent:
+    """One timestamped act of correspondence: a message sent, a mail received.
+
+    Carries no content — only when it happened and, where the source gives one, a
+    subject used to label the block it lands in. Nothing downstream stores or
+    renders message bodies.
+    """
+    ts: datetime             # tz-aware, local
+    kind: str                # email_sent | email_received | chat
+    subject: str = ""
+
+
+@dataclass
+class ActivitySession:
+    """A run of correspondence with no long gap in it, and the effort it is worth.
+
+    `minutes` is already the credited figure (lead-in + span, see SignalSpec), not
+    the wall-clock span, so a single message is worth its lead-in rather than zero.
+    """
+    start: datetime
+    end: datetime
+    kind: str
+    count: int
+    minutes: int
+    subjects: tuple[str, ...] = ()
 
 
 @dataclass
 class Block:
     start: datetime
     end: datetime
-    project: str             # 'Project / klant' column
-    taak: str                # 'Taak' column
-    kind: str = "focus"      # rota | meeting | focus | admin | leave
+    project: str             # 'Project / client' column
+    taak: str                # 'Task' column
+    kind: str = "focus"      # rota | meeting | focus | admin | leave | email | chat
 
     @property
     def minutes(self) -> int:

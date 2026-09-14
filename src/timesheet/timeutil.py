@@ -3,15 +3,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-NL_DAYS = ["Maandag", "Dinsdag", "Woensdag", "Donderdag", "Vrijdag", "Zaterdag", "Zondag"]
-NL_MONTHS = ["", "januari", "februari", "maart", "april", "mei", "juni", "juli",
-             "augustus", "september", "oktober", "november", "december"]
-
 Interval = tuple[datetime, datetime]
 
 
 def hm(minutes: int) -> str:
-    """420 -> '7:00'. Hours are NOT zero-padded, matching the manager's sheet.
+    """420 -> '7:00'. Hours are NOT zero-padded, matching how a timesheet reads.
     Totals may exceed 24h (e.g. a week), which is fine: '42:27'."""
     minutes = max(0, int(minutes))
     return f"{minutes // 60}:{minutes % 60:02d}"
@@ -57,8 +53,8 @@ def free_intervals(window: Interval, occupied: list[Interval]) -> list[Interval]
 
 def resolve_overlaps(blocks: list[Interval]) -> list[Interval]:
     """Trim overlapping fixed blocks so none double-book; drop fully-covered ones.
-    Meetings genuinely overlap in Outlook (a standup inside a planning call); the
-    sheet can only show one thing at a time."""
+    Meetings genuinely overlap in a real calendar (a standup inside a planning
+    call); the sheet can only show one thing at a time."""
     out: list[Interval] = []
     for s, e in sorted(blocks):
         if out and s < out[-1][1]:

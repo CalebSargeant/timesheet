@@ -64,13 +64,15 @@ def test_day_block_json_roundtrip():
 def test_filestore_get_days_roundtrip(tmp_path, monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SECRET_KEY", "a-test-secret-key-long-enough-to-be-accepted")
     from timesheet.service.store import FileStore, make_store
 
     store = make_store()
     assert isinstance(store, FileStore)
-    meta = store.save(date(2026, 7, 20), {}, _sample_days())
+    uid = "github.com:1"
+    meta = store.save(uid, date(2026, 7, 20), {}, _sample_days())
     assert meta["week_start"] == "2026-07-20"
-    got = store.get_days(date(2026, 7, 20))
+    got = store.get_days(uid, date(2026, 7, 20))
     assert got is not None and got[0].minutes == 60
-    assert store.get_days(date(2026, 7, 13)) is None          # uncached week
-    assert store.latest_meta()["week_start"] == "2026-07-20"
+    assert store.get_days(uid, date(2026, 7, 13)) is None     # uncached week
+    assert store.latest_meta(uid)["week_start"] == "2026-07-20"

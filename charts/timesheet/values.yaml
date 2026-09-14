@@ -1,0 +1,127 @@
+# timesheet — a web Deployment (reads) and a scheduled CronJob (writes), sharing
+# one PostgreSQL database. The pods are stateless: no PVC, no SQLite.
+
+image:
+  repository: ghcr.io/calebsargeant/timesheet
+  tag: ""                     # defaults to the chart's appVersion
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+service:
+  type: ClusterIP
+  port: 8000
+
+# Off by default: plenty of clusters front a Service with something other than an
+# Ingress (a tunnel, a gateway, a service mesh).
+ingress:
+  enabled: false
+
+# Non-secret runtime config -> ConfigMap. Secrets go in the Secret below.
+config:
+  # Where the service is reachable. The OAuth callback is <publicUrl>/auth/callback,
+  # and links in delivered messages point here. This MUST be set.
+  publicUrl: ""
+
+  # github.com, or your GitHub Enterprise Server hostname. For GHES, register the
+  # OAuth app on the Enterprise Server itself; nothing else changes.
+  githubHost: github.com
+  githubOauthScopes: "read:user user:email repo read:org"
+
+  # single | allowlist | org | open. `single` means the first account to sign in
+  # claims this deployment and every later one is refused — the right default for
+  # something that stores delegated mailbox tokens.
+  accessPolicy: single
+  allowedLogins: ""           # for allowlist: comma-separated GitHub logins
+  allowedOrgs: ""             # for org: comma-separated org logins
+
+  # Starting values for a new account. Each person overrides these under Settings.
+  locale: en
+  tz: UTC
+  dayStart: "08:30"
+  minDayMinutes: 480
+  dayRolloverHour: 5
+  rotaEnabled: false
+  rotaMinutes: 75
+  includeAfterHours: false
+  includeEmail: true
+  includeChat: true
+  backfillWeeks: 6
+  downloadTtlSeconds: 604800
+
+  # Must be writable: Entra rotates the refresh token on every use, and a
+  # read-only path silently replays a spent one until it dies.
+  m365McpTokenCache: /tmp/m365-mcp-token.json
+
+  # Optional AI label polish, in the scheduled refresh only. An empty model means
+  # AI is off and the deterministic summariser is used.
+  llm:
+    baseUrl: ""
+    model: ""
+    reasoningEffort: "low"
+
+  # SMTP belongs to the deployment: an account holder gives a recipient, never a
+  # mail server's credentials. The password goes in the Secret.
+  email:
+    smtpHost: ""
+    smtpPort: 587
+    smtpStartTls: true
+    from: ""
+
+# Secret env. Point `existingSecretName` at whatever already projects secrets into
+# this namespace (External Secrets, Sealed Secrets, the CSI driver, a hand-made
+# Secret); the chart deliberately does not pick one for you. `create: true` with
+# inline `data` is for local development only — those values land in your Helm
+# release, which is not a secret store.
+#
+# Keys the app reads:
+#   SECRET_KEY                   signs sessions, encrypts stored tokens (REQUIRED)
+#   GITHUB_OAUTH_CLIENT_ID       the OAuth app                         (REQUIRED)
+#   GITHUB_OAUTH_CLIENT_SECRET                                         (REQUIRED)
+#   DATABASE_URL                 PostgreSQL DSN                        (REQUIRED)
+#   SMTP_PASSWORD                only if delivering by email
+#   LLM_API_KEY                  only if AI label polish is on
+secrets:
+  create: false
+  existingSecretName: ""
+  data: {}
+
+# Scheduled refresh: the heavy signals (reviews, mail, chat) and delivery.
+cronjob:
+  enabled: true
+  schedule: "30 18 * * 1-5"   # 18:30 Mon-Fri
+  timeZone: UTC
+  send: true                  # pass --send, delivering to each account's manager
+  concurrencyPolicy: Forbid
+  backoffLimit: 2
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+
+resources:
+  requests: {cpu: 25m, memory: 96Mi}
+  limits: {cpu: 500m, memory: 256Mi}
+
+readinessProbe: {initialDelaySeconds: 3, periodSeconds: 10}
+livenessProbe: {initialDelaySeconds: 10, periodSeconds: 30}
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+  seccompProfile: {type: RuntimeDefault}
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: {drop: ["ALL"]}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+extraEnv: []

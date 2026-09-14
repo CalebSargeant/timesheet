@@ -1,0 +1,22 @@
+timesheet deployed.
+
+  Web:     {{ .Values.config.publicUrl }}
+{{- if .Values.cronjob.enabled }}
+  Refresh: CronJob {{ include "ts.fullname" . }}-refresh @ {{ .Values.cronjob.schedule }} ({{ .Values.cronjob.timeZone }})
+{{- end }}
+
+Register the OAuth app's callback URL as:
+  {{ .Values.config.publicUrl }}/auth/callback
+
+Then open the web URL and sign in with GitHub. With ACCESS_POLICY={{ .Values.config.accessPolicy }},
+{{- if eq .Values.config.accessPolicy "single" }}
+the first account to sign in claims this deployment and every later one is
+refused. Change config.accessPolicy to admit more people.
+{{- else }}
+see the README for exactly who that admits.
+{{- end }}
+{{- if .Values.cronjob.enabled }}
+
+Kick a refresh now:
+  kubectl -n {{ .Release.Namespace }} create job --from=cronjob/{{ include "ts.fullname" . }}-refresh manual-1
+{{- end }}

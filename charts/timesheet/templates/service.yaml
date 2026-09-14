@@ -1,14 +1,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "gts.fullname" . }}
+  name: {{ include "ts.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "gts.labels" . | nindent 4 }}
+    {{- include "ts.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
   selector:
-    {{- include "gts.selectorLabels" . | nindent 4 }}
+    {{- include "ts.selectorLabels" . | nindent 4 }}
   ports:
     - name: http
       port: {{ .Values.service.port }}

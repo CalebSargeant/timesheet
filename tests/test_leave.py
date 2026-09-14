@@ -1,9 +1,13 @@
 """A booked day off must report as leave, not as a reconstructed working day.
 
-AFAS pushes leave into Outlook as an all-day event marked busy ("Leave / Verlof").
-Friday 7 August 2026 is the real case: the daily-standup invite still sat in the
-calendar, so the day used to be floored to a padded 8h of admin — on a day nobody
-worked. The raw events below are the real shapes both calendar collectors emit.
+HR systems push leave into the work calendar as an all-day event marked busy.
+The case this exists for: a Friday off where the recurring standup invite still
+sat in the calendar, so the day was floored to a padded 8h of admin — on a day
+nobody worked. The raw events below are the shapes every calendar collector emits.
+
+The leave subject here is Dutch on purpose. Markers are matched across every
+locale at once, because whoever runs the calendar decides what language the
+subjects are in, and that is rarely the reader's.
 """
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -14,21 +18,22 @@ from timesheet.reconstruct import reconstruct_week
 from timesheet.render import html, xlsx
 
 TZ = ZoneInfo("Europe/Amsterdam")
+BASE = Config(tz="Europe/Amsterdam")
 WEEK = datetime(2026, 8, 3, tzinfo=TZ)                 # Monday of the leave Friday
 NOW = datetime(2026, 8, 12, 9, 0, tzinfo=TZ)           # well after that week
 
 LEAVE = {"subject": "Leave / Verlof", "all_day": True, "show_as": "busy",
          "start_utc": "2026-08-07T00:00:00", "end_utc": "2026-08-08T00:00:00"}
-STANDUP = {"subject": "!! Daily standup Team Cloud & CS !!", "all_day": False,
+STANDUP = {"subject": "!! Daily standup !!", "all_day": False,
            "show_as": "busy", "start_utc": "2026-08-07T06:45:00",
            "end_utc": "2026-08-07T07:30:00"}
-DESK = {"subject": "Booking (D / Desk 5.17 / Corners)", "all_day": True, "show_as": "free",
+DESK = {"subject": "Booking (Desk 5.17)", "all_day": True, "show_as": "free",
         "start_utc": "2026-08-06T00:00:00", "end_utc": "2026-08-07T00:00:00"}
-COMMIT = {"ts_local": "2026-08-07T10:00:00+02:00", "repo": "infra", "message": "fix: iets"}
+COMMIT = {"ts_local": "2026-08-07T10:00:00+02:00", "repo": "infra", "message": "fix: a thing"}
 
 
 def _week(raw_meetings, raw_commits=(), cfg=None):
-    cfg = cfg or Config()
+    cfg = cfg or BASE
     return reconstruct_week(
         normalize_meetings(raw_meetings, cfg, TZ),
         normalize_commits(list(raw_commits), TZ),
@@ -42,17 +47,17 @@ def _friday(days):
 
 
 def test_all_day_busy_event_is_detected_as_leave():
-    cfg = Config()
+    cfg = BASE
     evs = normalize_full_days([LEAVE], cfg, TZ)
     assert [e.date for e in evs] == [date(2026, 8, 7)]      # not the 6th: it's a date, not UTC midnight
-    assert evs[0].project == cfg.leave_project and evs[0].kind == "leave"
+    assert evs[0].project == cfg.labels.leave_project and evs[0].kind == "leave"
     assert evs[0].taak == "Leave / Verlof"
 
 
 def test_leave_day_reports_leave_instead_of_a_padded_workday():
     days, cfg = _week([LEAVE, STANDUP], [COMMIT])
     friday = _friday(days)
-    assert [b.project for b in friday.blocks] == [cfg.leave_project]
+    assert [b.project for b in friday.blocks] == [cfg.labels.leave_project]
     assert friday.minutes == cfg.full_day_minutes          # one honest 8h leave row
     assert not any(b.kind in ("admin", "focus", "meeting") for b in friday.blocks)
     assert not any("standup" in b.taak.lower() for b in friday.blocks)
@@ -61,34 +66,34 @@ def test_leave_day_reports_leave_instead_of_a_padded_workday():
 def test_leave_day_is_reported_even_with_no_other_signal():
     """No meetings, no commits — the day would otherwise be skipped entirely."""
     days, cfg = _week([LEAVE])
-    assert _friday(days).blocks[0].project == cfg.leave_project
+    assert _friday(days).blocks[0].project == cfg.labels.leave_project
 
 
 def test_free_all_day_bookings_are_not_leave():
     """A desk booking is all-day but 'free' — Thursday stays a normal working day."""
-    cfg = Config()
+    cfg = BASE
     assert normalize_full_days([DESK], cfg, TZ) == []
     days, _ = _week([DESK, STANDUP], [COMMIT])
-    assert all(b.project != cfg.leave_project for d in days for b in d.blocks)
+    assert all(b.project != cfg.labels.leave_project for d in days for b in d.blocks)
 
 
 def test_detail_free_all_day_block_still_reads_as_leave():
     """A calendar published as 'availability only' hides the subject behind "Busy";
     a whole day blocked out with nothing said about it is still an absence."""
-    cfg = Config()
+    cfg = BASE
     evs = normalize_full_days([dict(LEAVE, subject="Busy")], cfg, TZ)
     assert [(e.project, e.taak, e.kind) for e in evs] == [
-        (cfg.leave_project, cfg.leave_taak, "leave")]
+        (cfg.labels.leave_project, cfg.labels.leave_task, "leave")]
 
 
 def test_timed_busy_meetings_are_not_leave():
-    assert normalize_full_days([STANDUP], Config(), TZ) == []
+    assert normalize_full_days([STANDUP], BASE, TZ) == []
 
 
 def test_multi_day_leave_expands_all_dates_weekends_filtered_by_reconstruct():
     # Fri 7 Aug through Mon 10 Aug inclusive (Outlook's end date is exclusive)
     leave = dict(LEAVE, end_utc="2026-08-11T00:00:00")
-    cfg = Config()
+    cfg = BASE
     assert [e.date for e in normalize_full_days([leave], cfg, TZ)] == [
         date(2026, 8, 7), date(2026, 8, 8), date(2026, 8, 9), date(2026, 8, 10)]
     days, _ = _week([leave])
@@ -99,7 +104,7 @@ def test_multi_day_leave_expands_all_dates_weekends_filtered_by_reconstruct():
 
 
 def test_future_leave_is_not_reported_yet():
-    cfg = Config()
+    cfg = BASE
     assert _week([LEAVE])[0], "sanity: past leave shows"
     early = reconstruct_week([], [], WEEK, cfg,
                              now=datetime(2026, 8, 5, 12, 0, tzinfo=TZ),   # the Wednesday before
@@ -109,6 +114,15 @@ def test_future_leave_is_not_reported_yet():
 
 def test_leave_renders_in_both_outputs():
     days, cfg = _week([LEAVE, STANDUP])
-    page = html.build_week(days)
-    assert cfg.leave_project in page and "tag leave" in page
-    assert xlsx.build_week(days)[:2] == b"PK"
+    page = html.build_week(days, locale=cfg.strings)
+    assert cfg.labels.leave_project in page and "tag leave" in page
+    assert xlsx.build_week(days, locale=cfg.strings)[:2] == b"PK"
+
+
+def test_a_dutch_leave_subject_is_understood_by_an_english_reader():
+    """Markers are matched across every locale. Reading "Verlof" as an ordinary
+    meeting would reconstruct a day off into eight hours of invented work."""
+    english = Config(tz="Europe/Amsterdam", locale="en")
+    evs = normalize_full_days([dict(LEAVE, subject="Verlof")], english, TZ)
+    assert [e.kind for e in evs] == ["leave"]
+    assert evs[0].project == "Leave"

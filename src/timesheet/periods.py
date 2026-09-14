@@ -8,14 +8,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+from . import i18n
+
 PERIOD_KEYS = ("this-week", "last-week", "this-month", "last-month")
 DEFAULT = "this-week"
-_LABELS = {
-    "this-week": "Deze week",
-    "last-week": "Vorige week",
-    "this-month": "Deze maand",
-    "last-month": "Vorige maand",
-}
+
+
+def _labels(loc: i18n.Locale) -> dict[str, str]:
+    return {
+        "this-week": loc.period_this_week,
+        "last-week": loc.period_last_week,
+        "this-month": loc.period_this_month,
+        "last-month": loc.period_last_month,
+    }
 
 
 @dataclass(frozen=True)
@@ -38,20 +43,23 @@ def _month_bounds(d: date) -> tuple[date, date]:
     return first, nxt - timedelta(days=1)
 
 
-def resolve_period(key: str | None, today: date) -> Period:
+def resolve_period(key: str | None, today: date,
+                   locale: str | i18n.Locale | None = None) -> Period:
+    loc = locale if isinstance(locale, i18n.Locale) else i18n.get(locale)
+    labels = _labels(loc)
     key = key if key in PERIOD_KEYS else DEFAULT
     if key == "this-week":
         m = _monday(today)
-        return Period(key, _LABELS[key], m, m + timedelta(days=6), False)
+        return Period(key, labels[key], m, m + timedelta(days=6), False)
     if key == "last-week":
         m = _monday(today) - timedelta(days=7)
-        return Period(key, _LABELS[key], m, m + timedelta(days=6), False)
+        return Period(key, labels[key], m, m + timedelta(days=6), False)
     if key == "this-month":
         a, b = _month_bounds(today)
-        return Period(key, _LABELS[key], a, b, True)
+        return Period(key, labels[key], a, b, True)
     # last-month
     a, b = _month_bounds(today.replace(day=1) - timedelta(days=1))
-    return Period(key, _LABELS[key], a, b, True)
+    return Period(key, labels[key], a, b, True)
 
 
 def mondays_covering(start: date, end: date) -> list[date]:
@@ -72,9 +80,11 @@ def parse_date(s: str | None) -> date | None:
         return None
 
 
-def custom_period(start: date, end: date) -> Period:
+def custom_period(start: date, end: date,
+                  locale: str | i18n.Locale | None = None) -> Period:
     """An explicit start/end range chosen with the date pickers."""
+    loc = locale if isinstance(locale, i18n.Locale) else i18n.get(locale)
     if end < start:
         start, end = end, start
-    label = f"{start.isoformat()} tot {end.isoformat()}"
+    label = f"{start.isoformat()} {loc.period_to} {end.isoformat()}"
     return Period("custom", label, start, end, is_month=(end - start).days > 6)

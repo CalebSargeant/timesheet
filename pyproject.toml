@@ -3,26 +3,43 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "github-timesheet"
-version = "0.1.0"
-description = "Reconstruct a PinkRoccade 'Uren' timesheet from real calendar + GitHub-Enterprise signals"
+name = "timesheet"
+version = "0.2.0"
+description = "Reconstruct a working week from calendar, mail, chat and GitHub activity"
+readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
+authors = [{ name = "Caleb Sargeant" }]
+keywords = ["timesheet", "github", "microsoft365", "calendar", "time-tracking"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Scheduling",
+]
 dependencies = [
     "openpyxl>=3.1",
 ]
 
+[project.urls]
+Homepage = "https://github.com/calebsargeant/timesheet"
+Issues = "https://github.com/calebsargeant/timesheet/issues"
+
 [project.optional-dependencies]
-# The self-hosted service; the reconstruction core needs none of these.
+# The self-hosted web service. The reconstruction core needs none of these:
+# `timesheet.demo` runs on a bare install with openpyxl and nothing else.
 service = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
-    "httpx>=0.27",
-    "msal>=1.28",            # device-code auth against a Microsoft first-party client
-    "icalendar>=5.0",        # published-ICS calendar path
-    "recurring-ical-events>=2.2",   # expand recurring events (daily standup) in the ICS
-    "psycopg[binary]>=3.1",  # shared firefly CNPG
-    "apscheduler>=3.10",
+    "python-multipart>=0.0.9",      # FastAPI needs this to read a posted form
+    "cryptography>=42",             # AES-GCM for stored Microsoft/GitHub tokens
+    "icalendar>=5.0",               # published-ICS calendar path
+    "recurring-ical-events>=2.2",   # expand recurring events in an ICS feed
+    "psycopg[binary]>=3.1",         # PostgreSQL store
 ]
+# Only for the device-code Microsoft Graph collector, which most tenants block.
+graph = ["msal>=1.28"]
 dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.5"]
 
 [project.scripts]
@@ -38,10 +55,7 @@ src = ["src", "tests"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-# coverage.xml is what the Brimyr patch-coverage gate reads. Without it the gate
-# reports "BROKEN test run" rather than a coverage number, which reads like the
-# tests failed when they passed.
-addopts = "--cov=timesheet --cov-report=xml --cov-report=term-missing:skip-covered"
+addopts = "--cov=timesheet --cov-report=term-missing:skip-covered"
 
 [tool.coverage.run]
 source = ["src/timesheet"]

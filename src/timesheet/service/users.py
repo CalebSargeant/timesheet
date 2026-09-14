@@ -13,6 +13,8 @@ is a crash on every page load.
 """
 from __future__ import annotations
 
+import logging
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -20,6 +22,8 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .. import i18n
+
+log = logging.getLogger(__name__)
 
 DELIVERY_CHANNELS = ("none", "email", "chat")
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -36,28 +40,33 @@ class Field:
     high: int = 0
     choices: tuple[str, ...] = ()
     max_len: int = 200
+    # The environment variable a deployment sets to change the STARTING value for
+    # new accounts. None means the field is per-person and a deployment-wide
+    # default would be wrong — an identity, a manager's address, whether that
+    # person wants anything sent at all.
+    env: str | None = None
 
 
 SETTINGS: tuple[Field, ...] = (
     # Presentation
-    Field("locale", "locale", i18n.DEFAULT_LOCALE),
-    Field("tz", "tz", "UTC"),
+    Field("locale", "locale", i18n.DEFAULT_LOCALE, env="LOCALE"),
+    Field("tz", "tz", "UTC", env="TZ"),
 
     # The shape of a working day
-    Field("day_start", "time", "08:30"),
-    Field("earliest_start_floor", "time", "06:00"),
-    Field("min_day_minutes", "int", 480, low=0, high=16 * 60),
-    Field("admin_floor_minutes", "int", 30, low=0, high=8 * 60),
-    Field("day_rollover_hour", "int", 5, low=0, high=12),
+    Field("day_start", "time", "08:30", env="DAY_START"),
+    Field("earliest_start_floor", "time", "06:00", env="EARLIEST_START_FLOOR"),
+    Field("min_day_minutes", "int", 480, low=0, high=16 * 60, env="MIN_DAY_MINUTES"),
+    Field("admin_floor_minutes", "int", 30, low=0, high=8 * 60, env="ADMIN_FLOOR_MINUTES"),
+    Field("day_rollover_hour", "int", 5, low=0, high=12, env="DAY_ROLLOVER_HOUR"),
     Field("workdays", "days", (0, 1, 2, 3, 4)),
-    Field("rota_enabled", "bool", False),
-    Field("rota_minutes", "int", 75, low=0, high=8 * 60),
+    Field("rota_enabled", "bool", False, env="ROTA_ENABLED"),
+    Field("rota_minutes", "int", 75, low=0, high=8 * 60, env="ROTA_MINUTES"),
 
     # Which signals count
-    Field("include_reviews", "bool", True),
-    Field("include_authored", "bool", True),
-    Field("include_email", "bool", True),
-    Field("include_chat", "bool", True),
+    Field("include_reviews", "bool", True, env="INCLUDE_REVIEWS"),
+    Field("include_authored", "bool", True, env="INCLUDE_AUTHORED"),
+    Field("include_email", "bool", True, env="INCLUDE_EMAIL"),
+    Field("include_chat", "bool", True, env="INCLUDE_CHAT"),
 
     # Where the work is
     Field("github_host", "str", "github.com", max_len=120),
@@ -81,8 +90,30 @@ _ACCOUNT_ONLY = frozenset({
 })
 
 
-def defaults() -> dict:
-    return {f.name: f.default for f in SETTINGS}
+def defaults(env: dict | None = None) -> dict:
+    """The starting values a new account gets.
+
+    A deployment declares these in the environment (the chart's `config` block),
+    and before this read them a `TZ` or `LOCALE` set there was silently ignored
+    for every account created — so the chart's own "starting values for a new
+    account" comment was untrue.
+
+    Each value goes through `coerce`, so a typo in a deployment's environment is
+    logged and falls back to the built-in default rather than poisoning every
+    account that is ever created. Per-person fields (an identity, a manager, a
+    delivery switch) carry no `env` and are never pre-set.
+    """
+    e = env if env is not None else os.environ
+    out: dict[str, Any] = {}
+    for f in SETTINGS:
+        value = f.default
+        if f.env and e.get(f.env) not in (None, ""):
+            try:
+                value = coerce(f.name, e[f.env])
+            except ValueError as exc:
+                log.warning("ignoring %s=%r from the environment: %s", f.env, e[f.env], exc)
+        out[f.name] = value
+    return out
 
 
 def _as_bool(value: Any) -> bool:

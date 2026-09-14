@@ -1,3 +1,13 @@
+# Publishes the image and the chart for a tag.
+#
+# The TAG is created by `version.yml` (Diatreme, from conventional commits) —
+# not by hand. This job only builds what that tag points at, so the chart's
+# appVersion and the image tag are always the same release.
+#
+# Note the published image tag is BARE semver (0.2.3): docker/metadata-action's
+# semver pattern strips the leading v. The prd HelmRelease sets no image tag at
+# all and lets the chart's appVersion decide, which is what keeps the two from
+# drifting apart.
 name: Release
 
 on:

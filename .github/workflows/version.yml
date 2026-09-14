@@ -1,0 +1,50 @@
+# Versioning and tagging, driven by conventional commits.
+#
+# WHY: cutting releases by hand is what went wrong repeatedly. A v0.2.2 chart was
+# pinned against a 0.2.0 image; a tag was pushed at a commit whose fix had missed
+# the squash-merge by seconds; and every release needed the version bumped by
+# hand in three files that could silently disagree. Diatreme reads the commits
+# since the last tag, decides the version, bumps it, and tags.
+#
+# WHAT THIS DELIBERATELY DOES NOT DO: publish. `release.yml` still owns building
+# and pushing the image and chart, triggered by the tag this job creates. That
+# split is on purpose — Diatreme's release mode PROMOTES an image a `ci`-mode run
+# pushed as `pr-<N>`, which is a different pipeline shape from build-on-tag, and
+# swapping the publishing path is a separate change with its own blast radius.
+#
+# Once a tag lands, prd follows on its own: the GitRepository tracks
+# `semver: >=0.2.3` and the HelmRelease sets no image tag, so the chart's
+# appVersion decides which image runs. One tag moves both and they cannot drift.
+#
+# Auth is the hosted Diatreme App over OIDC — no PAT, no org variables, nothing
+# that breaks if this repository changes hands again.
+name: Version
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: version-${{ github.ref_name }}
+  cancel-in-progress: false      # never abandon a half-finished release
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write            # commit the version bump and push the tag
+      id-token: write            # exchange GitHub OIDC for a short-lived token
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0         # the version is derived from history since the last tag
+
+      - uses: MagmaMoose/diatreme@615f3c6586f1ca1d43633ece30f460f79eb068f2 # v2.13.1
+        with:
+          environment: prod
+          environments: '["prod"]'
+          prerelease-identifiers: '{}'

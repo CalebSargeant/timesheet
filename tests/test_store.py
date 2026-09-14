@@ -134,3 +134,37 @@ def test_make_store_defaults_to_file(monkeypatch, tmp_path):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     assert isinstance(make_store(), FileStore)
+
+
+# --- an empty week is a missing input, not a fact ---------------------------
+
+
+def test_an_empty_week_is_never_served_from_the_cache(tmp_path):
+    """The first-run trap. Everybody signs in before they connect anything, so
+    their first page view reconstructs every recent week from no sources and
+    gets nothing. Caching that froze their whole history blank permanently: a
+    stored [] is not None and the logic version matches, so connecting
+    Microsoft afterwards changed nothing."""
+    s = FileStore(str(tmp_path))
+    monday = date(2026, 7, 20)
+    s.save(ALICE, monday, {}, [])            # what a not-yet-connected account yields
+    assert s.get_days(ALICE, monday) is None  # a miss, so it gets recomputed
+
+
+def test_a_week_with_days_is_still_cached(tmp_path):
+    s = FileStore(str(tmp_path))
+    monday = date(2026, 7, 20)
+    s.save(ALICE, monday, {}, [_day(monday)])
+    assert s.get_days(ALICE, monday) is not None
+
+
+def test_an_empty_week_does_not_mask_a_later_real_one(tmp_path):
+    """The sequence that actually happens: sign in, get nothing, connect
+    Microsoft, come back."""
+    s = FileStore(str(tmp_path))
+    monday = date(2026, 7, 20)
+    s.save(ALICE, monday, {}, [])
+    assert s.get_days(ALICE, monday) is None
+    s.save(ALICE, monday, {}, [_day(monday)])
+    got = s.get_days(ALICE, monday)
+    assert got is not None and len(got) == 1

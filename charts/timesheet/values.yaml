@@ -29,8 +29,9 @@ config:
   # and links in delivered messages point here. This MUST be set.
   publicUrl: ""
 
-  # github.com, or your GitHub Enterprise Server hostname. For GHES, register the
-  # OAuth app on the Enterprise Server itself; nothing else changes.
+  # Which GitHub; register the OAuth app on this same host. Handles github.com,
+  # an Enterprise Cloud data-residency tenant (acme.ghe.com), and a self-hosted
+  # Enterprise Server — the three use different API bases, see the README.
   githubHost: github.com
   githubOauthScopes: "read:user user:email repo read:org"
 

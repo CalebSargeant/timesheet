@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from ..collectors.github import api_base, web_base
 from ..net import InsecureUrl, open_url
 from .users import User, defaults, user_id
 
@@ -72,13 +73,13 @@ class Provider:
 
     @property
     def web(self) -> str:
-        host = self.host.strip().lower().removeprefix("https://").rstrip("/") or DOTCOM
-        return f"https://{host}"
+        """Where the browser is sent, and where the token is exchanged. Always the
+        plain host, for every flavour of GitHub."""
+        return web_base(self.host)
 
     @property
     def api(self) -> str:
-        host = self.host.strip().lower().removeprefix("https://").rstrip("/") or DOTCOM
-        return "https://api.github.com" if host == DOTCOM else f"https://{host}/api/v3"
+        return api_base(self.host)
 
     @property
     def redirect_uri(self) -> str:

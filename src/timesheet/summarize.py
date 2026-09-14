@@ -42,6 +42,43 @@ def classify_focus(commits: list[Commit], cfg: Config) -> str:
     return labels.focus_project
 
 
+def _phrases(commits: list[Commit]) -> list[str]:
+    """The session's distinct commit subjects, cleaned, most descriptive first."""
+    seen: set[str] = set()
+    picks: list[str] = []
+    for c in commits:
+        # drop a conventional-commit prefix and any trailing (#123)
+        text = re.sub(r"\s*\(#\d+\)\s*$", "", _clean_subject(c.message)).strip()
+        key = text[:28].lower()
+        if key and key not in seen:
+            seen.add(key)
+            picks.append(text)
+    return sorted(picks, key=len, reverse=True)
+
+
+def summarize_lines(commits: list[Commit], project: str, cfg: Config, llm=None,
+                    count: int = 1) -> list[str]:
+    """Up to `count` distinct task lines for one session.
+
+    A long run on one theme is split across several rows by the focus cap, and
+    repeating one line down all of them reads as generated. Every line here is a
+    real subject from that same session, so the variety costs nothing in honesty.
+    Falls back to repeating the best line when the session has fewer subjects
+    than rows.
+    """
+    best = summarize_block(commits, project, cfg, llm)
+    lines = [best]
+    for phrase in _phrases(commits):
+        if len(lines) >= count:
+            break
+        candidate = _wb_trunc(phrase, 80)
+        if candidate not in lines:
+            lines.append(candidate)
+    while len(lines) < count:
+        lines.append(best)
+    return lines[:count]
+
+
 def summarize_block(commits: list[Commit], project: str, cfg: Config, llm=None) -> str:
     subjects = [c.message for c in commits]
     if llm is not None:
@@ -59,15 +96,7 @@ def summarize_block(commits: list[Commit], project: str, cfg: Config, llm=None) 
     # produced unreadable lines like "GHE auth ...; expose acc…"; a single tidy
     # phrase reads far better on the sheet, and the day's breadth already shows
     # through the separate blocks.
-    seen: set[str] = set()
-    picks: list[str] = []
-    for s in subjects:
-        c = re.sub(r"\s*\(#\d+\)\s*$", "", _clean_subject(s)).strip()   # drop trailing (#123)
-        key = c[:28].lower()
-        if key and key not in seen:
-            seen.add(key)
-            picks.append(c)
+    picks = _phrases(commits)
     if not picks:
         return project
-    headline = max(picks, key=len)                     # most descriptive subject wins
-    return _wb_trunc(headline, 80)
+    return _wb_trunc(picks[0], 80)                     # most descriptive subject wins

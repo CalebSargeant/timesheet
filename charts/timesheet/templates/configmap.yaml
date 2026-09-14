@@ -33,7 +33,10 @@ data:
   M365_MCP_TOKEN_CACHE: {{ .Values.config.m365McpTokenCache | quote }}
   LLM_BASE_URL: {{ .Values.config.llm.baseUrl | quote }}
   LLM_MODEL: {{ .Values.config.llm.model | quote }}
-  LLM_REASONING_EFFORT: {{ .Values.config.llm.reasoningEffort | default "low" | quote }}
+  # No `| default "low"` here: Helm treats an empty string as unset, so an
+  # explicit `reasoningEffort: ""` — the right setting for a non-reasoning
+  # model — silently came back as "low". values.yaml carries the default.
+  LLM_REASONING_EFFORT: {{ .Values.config.llm.reasoningEffort | quote }}
   {{- with .Values.config.email.smtpHost }}
   SMTP_HOST: {{ . | quote }}
   {{- end }}

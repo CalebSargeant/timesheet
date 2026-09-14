@@ -131,7 +131,15 @@ def test_chat_delivery_needs_a_connected_microsoft_account():
     assert out.sent is False and "not connected" in out.reason
 
 
-def test_chat_delivery_sends_through_the_users_own_connection(monkeypatch):
+@pytest.fixture
+def can_chat(monkeypatch):
+    """Pretend the connector grants a send scope. It does not in reality — see
+    test_chat_needs_a_write_scope_the_connector_does_not_grant."""
+    monkeypatch.setattr("timesheet.collectors.m365_mcp.can_send",
+                        lambda kind, session=None: "")
+
+
+def test_chat_delivery_sends_through_the_users_own_connection(monkeypatch, can_chat):
     monkeypatch.setenv("SECRET_KEY", "test-secret-key-for-delivery-tests-long-enough")
     sent = {}
     monkeypatch.setattr("timesheet.collectors.m365_mcp.send_chat",
@@ -145,7 +153,7 @@ def test_chat_delivery_sends_through_the_users_own_connection(monkeypatch):
     assert "/d/github.com:1/" in sent["text"] and "timesheet.example.invalid" in sent["text"]
 
 
-def test_a_failed_chat_send_is_reported_not_swallowed(monkeypatch):
+def test_a_failed_chat_send_is_reported_not_swallowed(monkeypatch, can_chat):
     def _boom(*_a, **_k):
         raise mcp_client.McpError("the tenant blocks app messages")
 
@@ -186,6 +194,35 @@ def test_unavailable_names_the_blocker_before_anything_is_sent():
     assert delivery.unavailable("email", mailer=mailer.Mailer(
         host="smtp.example.invalid", sender="a@b.invalid")) == ""
     assert "not connected" in delivery.unavailable("chat", session=None)
+    assert delivery.unavailable("none") == ""
+
+
+def test_chat_needs_a_write_scope_the_connector_does_not_grant(monkeypatch):
+    """The connector's delegated permissions are read-only — Chat.Read,
+    Mail.Read and friends, with no ChatMessage.Send and no Mail.Send. Sending
+    therefore fails with "FORBIDDEN: Missing scope" at the moment somebody
+    presses the button, so it is checked up front instead."""
+    from timesheet.collectors import m365_mcp
+    read_only = ["Calendars.Read", "Chat.Read", "ChatMessage.Read", "Mail.Read", "User.Read"]
+    monkeypatch.setattr(m365_mcp, "granted_scopes", lambda session=None: read_only)
+    why = delivery.unavailable("chat", session=McpSession(tokens={"refresh_token": "r"}))
+    assert "read-only" in why and "ChatMessage.Send" in why
+
+
+def test_a_connection_that_does_grant_sending_is_allowed(monkeypatch):
+    from timesheet.collectors import m365_mcp
+    monkeypatch.setattr(m365_mcp, "granted_scopes",
+                        lambda session=None: ["Chat.Read", "ChatMessage.Send"])
     assert delivery.unavailable("chat",
                                 session=McpSession(tokens={"refresh_token": "r"})) == ""
-    assert delivery.unavailable("none") == ""
+
+
+def test_an_unreachable_connector_is_not_reported_as_a_permissions_problem(monkeypatch):
+    from timesheet.collectors import m365_mcp
+
+    def _down(session=None):
+        raise mcp_client.McpError("cannot reach the MCP connector: dns")
+
+    monkeypatch.setattr(m365_mcp, "granted_scopes", _down)
+    why = delivery.unavailable("chat", session=McpSession(tokens={"refresh_token": "r"}))
+    assert "could not ask Microsoft" in why and "read-only" not in why

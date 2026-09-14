@@ -57,7 +57,8 @@ def unavailable(channel: str, *, mailer=None, session=None) -> str:
     if channel == "chat":
         if session is None or not session.connected:
             return "Microsoft is not connected for this account"
-        return ""
+        from ..collectors import m365_mcp
+        return m365_mcp.can_send("chat", session)
     return ""
 
 

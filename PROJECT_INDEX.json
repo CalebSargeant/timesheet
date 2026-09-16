@@ -1,0 +1,213 @@
+{
+  "generated": "2026-09-16",
+  "version": "0.3.1",
+  "description": "Reconstructs a working week from calendar, mail, chat, and GitHub activity; renders HTML and XLSX.",
+  "entry_points": {
+    "web_service": "src/timesheet/service/main.py",
+    "cli_runner": "src/timesheet/run.py",
+    "offline_demo": "src/timesheet/demo.py",
+    "collect_and_build": "src/timesheet/pipeline.py"
+  },
+  "modules": {
+    "core": {
+      "src/timesheet/reconstruct.py": {
+        "lines": 393,
+        "role": "Pure reconstruction core: calendar anchors → correspondence sittings → day-length estimate → free-time fill. No I/O."
+      },
+      "src/timesheet/activity.py": {
+        "lines": 203,
+        "role": "Normalised activity events → git-hours estimate, correspondence sessions, block candidates."
+      },
+      "src/timesheet/model.py": {
+        "lines": 109,
+        "role": "Data model: Day, Block, Week, and their serialisation."
+      },
+      "src/timesheet/config.py": {
+        "lines": 206,
+        "role": "Config dataclass (frozen), all knobs with defaults. RECONSTRUCT_VERSION cache gate. from_env() and with_settings() entry points."
+      },
+      "src/timesheet/periods.py": {
+        "lines": 90,
+        "role": "Named period helpers (this-week, last-week, etc.), date parsing, Mon-Sun week iteration."
+      },
+      "src/timesheet/timeutil.py": {
+        "lines": 64,
+        "role": "Time arithmetic: hm(), snap to grid, overlap clipping."
+      },
+      "src/timesheet/i18n.py": {
+        "lines": 277,
+        "role": "Locale strings (en/nl), cross-locale markers, Labels accessor with user overrides."
+      },
+      "src/timesheet/summarize.py": {
+        "lines": 102,
+        "role": "Rule-based label summariser (deterministic fallback when LLM is off)."
+      },
+      "src/timesheet/llm.py": {
+        "lines": 62,
+        "role": "Optional OpenAI-compatible label polish. Only called from background refresh, never web requests."
+      },
+      "src/timesheet/pipeline.py": {
+        "lines": 298,
+        "role": "collect() — live data pulls for one user's week. build_week() — pure reconstruction (testable offline). WeekBuild result carries days + per-source errors."
+      },
+      "src/timesheet/net.py": {
+        "lines": 87,
+        "role": "HTTP helpers: retry, timeout, user-agent."
+      }
+    },
+    "collectors": {
+      "src/timesheet/collectors/__init__.py": {
+        "lines": 13,
+        "role": "Re-exports normalize_activity, normalize_commits."
+      },
+      "src/timesheet/collectors/normalize.py": {
+        "lines": 126,
+        "role": "Raw connector output → normalised ActivityEvent list."
+      },
+      "src/timesheet/collectors/github.py": {
+        "lines": 253,
+        "role": "GitHub connector: commits, PRs opened, issues authored, PR reviews. Handles github.com, GHE Cloud (.ghe.com), and GHES (/api/v3)."
+      },
+      "src/timesheet/collectors/m365_graph.py": {
+        "lines": 184,
+        "role": "Microsoft Graph connector: calendar events, sent mail, received mail, Teams chat. Delegated token, read-only."
+      },
+      "src/timesheet/collectors/m365_mcp.py": {
+        "lines": 379,
+        "role": "Microsoft connector via MCP (alternative to direct Graph calls)."
+      },
+      "src/timesheet/collectors/m365_ics.py": {
+        "lines": 76,
+        "role": "Calendar-only fallback: fetches a published .ics URL, expands recurring events. Meetings only, no mail/chat."
+      },
+      "src/timesheet/collectors/mcp_client.py": {
+        "lines": 525,
+        "role": "MCP session client: device-code flow, token refresh, tool calls. McpAuthError / McpError for failure isolation."
+      }
+    },
+    "render": {
+      "src/timesheet/render/__init__.py": {
+        "lines": 3,
+        "role": "Package init."
+      },
+      "src/timesheet/render/html.py": {
+        "lines": 68,
+        "role": "Live HTML timesheet page renderer."
+      },
+      "src/timesheet/render/xlsx.py": {
+        "lines": 74,
+        "role": "XLSX workbook renderer (openpyxl)."
+      },
+      "src/timesheet/render/text.py": {
+        "lines": 25,
+        "role": "Plain-text renderer (CLI output, demo)."
+      },
+      "src/timesheet/render/theme.py": {
+        "lines": 132,
+        "role": "Shared colour/style constants for HTML and XLSX renderers."
+      }
+    },
+    "service": {
+      "src/timesheet/service/main.py": {
+        "lines": 727,
+        "role": "FastAPI app. All routes: /, /auth/*, /connect/microsoft/*, /settings, /deliver/*, /account/delete, /timesheet.xlsx, /d/{uid}/{token}/timesheet.xlsx, /api/ingest, /status, /healthz."
+      },
+      "src/timesheet/service/auth.py": {
+        "lines": 395,
+        "role": "GitHub OAuth (github.com + GHE). Signed stateless state param, session cookie, ACCESS_POLICY enforcement."
+      },
+      "src/timesheet/service/store.py": {
+        "lines": 439,
+        "role": "Persistence: PgStore (PostgreSQL) and FileStore (local dev). make_store() picks by DATABASE_URL. Every read takes a user_id — no cross-account queries possible."
+      },
+      "src/timesheet/service/users.py": {
+        "lines": 282,
+        "role": "User record, settings CRUD, account deletion."
+      },
+      "src/timesheet/service/delivery.py": {
+        "lines": 232,
+        "role": "Delivery orchestration: email and Teams chat channels. DELIVERY_CHAT_ENABLED is off by default."
+      },
+      "src/timesheet/service/email.py": {
+        "lines": 305,
+        "role": "Email transport: SMTP and Mailgun HTTP API. Both build the same MIME message. Check (test-mode Mailgun / SMTP probe) and send-to-me paths."
+      },
+      "src/timesheet/service/crypto.py": {
+        "lines": 85,
+        "role": "AES-256-GCM encryption/decryption of stored tokens. Refuses to operate without SECRET_KEY."
+      },
+      "src/timesheet/service/security.py": {
+        "lines": 60,
+        "role": "CSRF token generation and validation."
+      },
+      "src/timesheet/service/web.py": {
+        "lines": 326,
+        "role": "HTML page rendering helpers, template context, response builders."
+      },
+      "src/timesheet/service/mcp_connect.py": {
+        "lines": 97,
+        "role": "Device-code Microsoft sign-in flow endpoints (poll/finish)."
+      }
+    },
+    "cli": {
+      "src/timesheet/run.py": {
+        "lines": 185,
+        "role": "CLI entry point: reconstruct all/one account, optional --send, --list, --user."
+      },
+      "src/timesheet/demo.py": {
+        "lines": 55,
+        "role": "Offline demo: load a fixture JSON, reconstruct, write HTML + XLSX to a directory."
+      }
+    }
+  },
+  "tests": {
+    "path": "tests/",
+    "fixture_weeks": "tests/fixtures/",
+    "notable": {
+      "test_reconstruct.py": "Core reconstruction logic",
+      "test_activity.py": "Activity clustering and git-hours",
+      "test_service.py": "FastAPI route integration tests",
+      "test_store.py": "PgStore / FileStore",
+      "test_auth.py": "OAuth flow, state signing, access policy",
+      "test_delivery.py": "Email and chat delivery",
+      "test_ingest.py": "Pushed-ingest API",
+      "test_leave.py": "Full-day busy event (leave) handling",
+      "test_m365_mcp.py": "MCP connector",
+      "test_github_hosts.py": "github.com / GHE / GHES host handling",
+      "test_settings.py": "Config / env-var loading",
+      "test_summarize.py": "Label summariser",
+      "test_periods.py": "Period helpers",
+      "test_freshness.py": "Stored week cache freshness",
+      "test_day_window.py": "Day window, rollover, future-day skip",
+      "test_net.py": "HTTP helper retry/timeout"
+    }
+  },
+  "deploy": {
+    "helm_chart": "charts/timesheet/",
+    "docker": "docker-bake.hcl",
+    "env_reference": ".env.example",
+    "docs": "docs/"
+  },
+  "key_env_vars": {
+    "SECRET_KEY": "AES-GCM key for stored tokens; service refuses to start without it",
+    "PUBLIC_URL": "Base URL; controls Secure cookie flag and OAuth callback",
+    "GITHUB_OAUTH_CLIENT_ID": "GitHub OAuth app client ID",
+    "GITHUB_OAUTH_CLIENT_SECRET": "GitHub OAuth app client secret",
+    "GITHUB_HOST": "Override for GHE Cloud or GHES (default: github.com)",
+    "DATABASE_URL": "PostgreSQL DSN; FileStore used when absent",
+    "ACCESS_POLICY": "single (default) | allowlist | org | open",
+    "ALLOWED_LOGINS": "Comma-separated GitHub logins (ACCESS_POLICY=allowlist)",
+    "ALLOWED_ORGS": "Comma-separated GitHub orgs (ACCESS_POLICY=org)",
+    "SMTP_HOST": "SMTP server hostname",
+    "MAILGUN_API_KEY": "Mailgun sending key (alternative to SMTP)",
+    "MAILGUN_DOMAIN": "Mailgun domain",
+    "MAILGUN_BASE_URL": "Mailgun API base URL (default: api.mailgun.net; eu: api.eu.mailgun.net)",
+    "LIVE_MAX_AGE_SECONDS": "How long a stored week is considered fresh (default 900)",
+    "LOCALE": "en (default) | nl",
+    "TZ": "User timezone (default UTC)",
+    "LLM_BASE_URL": "OpenAI-compatible endpoint for label polish (optional)",
+    "LLM_API_KEY": "API key for LLM endpoint",
+    "LLM_MODEL": "Model name; empty disables AI",
+    "DELIVERY_CHAT_ENABLED": "Teams delivery switch (default off)"
+  }
+}

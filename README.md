@@ -153,8 +153,13 @@ leaves unattended, and the button always works.
 Two things on **Connections** answer "will this actually send?" without involving
 your manager:
 
-- **Check the mail server** opens a connection, authenticates and hangs up. A
-  blocked port, a wrong password or an untrusted certificate fails here.
+- **Check the mail server** proves the mail path without delivering anything.
+  Over SMTP it connects, authenticates and hangs up, so a blocked port, a wrong
+  password or an untrusted certificate fails here. Over Mailgun's API it sends in
+  **test mode**, which Mailgun validates in full (key, domain, region) and never
+  delivers. That is the only check a domain *sending* key is allowed to make, and
+  a sending key is the right key for this. Mailgun bills a test-mode message like
+  any other.
 - **Send a test to me** sends a real message, through the real mail server, to
   *you* — same From, same Reply-To, same attachment, subject prefixed `[test]`.
 

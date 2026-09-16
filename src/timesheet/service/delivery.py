@@ -138,7 +138,7 @@ def send(user: User, days, meta: dict, *, session=None, mailer=None,
                 reply_to=user.email, public_url=signed_link(user, public_url, period))
         except mailer_mod.MailError as e:
             log.warning("email to %s failed: %s", target, e)
-            return Delivery("email", False, target=target, reason=str(e)[:300])
+            return Delivery("email", False, target=target, reason=str(e)[:500])
         return Delivery("email", True, target=target)
 
     # chat
@@ -197,7 +197,7 @@ def send_test(user: User, *, to: str = "", mailer=None, public_url: str = "",
                              sender_name=user.display, reply_to=user.email,
                              public_url=public_url, xlsx=xlsx)
     except mailer_mod.MailError as e:
-        return Delivery("email", False, target=target, reason=str(e)[:300])
+        return Delivery("email", False, target=target, reason=str(e)[:500])
     return Delivery("email", True, target=target)
 
 
@@ -228,5 +228,5 @@ def check_email(*, mailer=None) -> str:
     try:
         m.check()
     except mailer_mod.MailError as e:
-        return str(e)[:300]
+        return str(e)[:500]
     return ""

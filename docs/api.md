@@ -145,9 +145,18 @@ thing, subject prefixed `[test]`.
 | `to` | Where to send it. Defaults to the account's own email address. |
 
 ### `POST /deliver/check`
-Opens a connection to the mail server, authenticates, and hangs up without
-sending anything. Answers the "is this thing plugged in" half of the question
-when the only other recipient available is a real manager. Form field: `csrf`.
+Proves the mail path without delivering anything. Form field: `csrf`.
+
+- **SMTP:** connects, negotiates TLS, authenticates, hangs up.
+- **Mailgun API:** a send with `o:testmode=yes`. Mailgun validates the key, the
+  domain and the region, and never delivers the message. A domain sending key
+  may call nothing else (Mailgun limits it to `POST /messages` and
+  `/messages.mime`), so any read-only check would report the right key as
+  rejected. Billed like any other message.
+
+A `401`, `403` or `404` from Mailgun comes back naming the region as the likely
+cause. A domain answers only on its own region's API, so a valid key sent to
+the other region fails exactly like a wrong one.
 
 ### `POST /account/delete`
 Removes the account, its stored weeks and its Microsoft token. Form fields:

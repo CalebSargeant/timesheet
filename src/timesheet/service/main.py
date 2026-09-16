@@ -289,7 +289,10 @@ def _guard(user: users.User, csrf: str | None) -> None:
 
 
 def _redirect(path: str, *, status: int = 303) -> RedirectResponse:
-    return RedirectResponse(path, status_code=status)
+    """Every redirect this service issues goes through here, so it is where the
+    "never off-site" rule lives. Callers already pass local paths; this makes that
+    a property of the service rather than of each caller remembering to."""
+    return RedirectResponse(auth.local_path(path), status_code=status)
 
 
 # --- sign in ---------------------------------------------------------------
@@ -299,7 +302,9 @@ def _redirect(path: str, *, status: int = 303) -> RedirectResponse:
 def login(next: str = Query(default="/")):
     if not _provider.configured:
         raise HTTPException(status_code=503, detail="GitHub sign-in is not configured")
-    return _redirect(_provider.authorize_url(auth.make_state(next)), status=307)
+    # The one redirect that must leave this host, to GitHub's own authorize page.
+    # Built from deployment config, never from the request.
+    return RedirectResponse(_provider.authorize_url(auth.make_state(next)), status_code=307)
 
 
 @app.get("/auth/callback")

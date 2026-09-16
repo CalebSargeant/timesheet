@@ -75,8 +75,24 @@ def _safe(user_id: str) -> str:
     GitHub host). Anything outside this set — a slash, a dot-dot — would let one
     account's file path escape into another's, so it is replaced rather than
     trusted.
+
+    Dots are kept, because a host has them, which means the character filter
+    alone still passed `..` through intact — and the week directory is a segment
+    of its own, so `weeks/../` was the store's root. A name made of nothing but
+    dots is therefore rewritten as well.
     """
-    return "".join(c if c.isalnum() or c in "-_." else "_" for c in user_id)[:120] or "anon"
+    out = "".join(c if c.isalnum() or c in "-_." else "_" for c in user_id)[:120]
+    if not out.strip("."):
+        out = "_" * len(out)
+    return out or "anon"
+
+
+def _inside(root: Path, path: Path) -> Path:
+    """`path`, having checked it resolves under `root`. `_safe` should make this
+    unreachable; this is what keeps it true if `_safe` is ever loosened."""
+    if not path.resolve().is_relative_to(root.resolve()):
+        raise ValueError("refusing a store path outside the data directory")
+    return path
 
 
 class FileStore:
@@ -91,7 +107,7 @@ class FileStore:
     # --- users ---
 
     def _user_path(self, user_id: str) -> Path:
-        return self.dir / "users" / f"{_safe(user_id)}.json"
+        return _inside(self.dir, self.dir / "users" / f"{_safe(user_id)}.json")
 
     def save_user(self, user: User) -> User:
         p = self._user_path(user.id)
@@ -125,13 +141,13 @@ class FileStore:
     def delete_user(self, user_id: str) -> None:
         self._user_path(user_id).unlink(missing_ok=True)
         self._cred_path(user_id).unlink(missing_ok=True)
-        for p in (self.dir / "weeks" / _safe(user_id)).glob("*.json"):
+        for p in self._weeks_dir(user_id).glob("*.json"):
             p.unlink(missing_ok=True)
 
     # --- credentials ---
 
     def _cred_path(self, user_id: str) -> Path:
-        return self.dir / "creds" / f"{_safe(user_id)}.json"
+        return _inside(self.dir, self.dir / "creds" / f"{_safe(user_id)}.json")
 
     def _creds(self, user_id: str) -> dict:
         p = self._cred_path(user_id)
@@ -170,8 +186,11 @@ class FileStore:
 
     # --- weeks ---
 
+    def _weeks_dir(self, user_id: str) -> Path:
+        return _inside(self.dir, self.dir / "weeks" / _safe(user_id))
+
     def _path(self, user_id: str, monday: date) -> Path:
-        return self.dir / "weeks" / _safe(user_id) / f"week-{monday.isoformat()}.json"
+        return self._weeks_dir(user_id) / f"week-{monday.isoformat()}.json"
 
     def save(self, user_id: str, week_start: date, payload: dict, days: list[Day],
              full: bool = False) -> dict:
@@ -201,7 +220,7 @@ class FileStore:
 
     def latest_meta(self, user_id: str) -> dict:
         metas = []
-        for p in (self.dir / "weeks" / _safe(user_id)).glob("week-*.json"):
+        for p in self._weeks_dir(user_id).glob("week-*.json"):
             try:
                 metas.append(json.loads(p.read_text())["meta"])
             except (OSError, ValueError, KeyError):

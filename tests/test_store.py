@@ -75,6 +75,21 @@ def test_a_user_id_cannot_escape_its_own_directory(tmp_path):
     assert list((tmp_path / "weeks").iterdir())
 
 
+@pytest.mark.parametrize("uid", ["..", ".", "..."])
+def test_an_id_made_of_dots_is_not_a_directory(tmp_path, uid):
+    """The character filter keeps dots, because hosts have them — so `..` used to
+    come through intact, and since each account's weeks live in a directory of
+    their own, `weeks/../week-*.json` landed in the data root instead."""
+    s = FileStore(str(tmp_path / "data"))
+    monday = date(2026, 7, 20)
+    s.save(uid, monday, {}, [_day(monday)])
+    weeks = tmp_path / "data" / "weeks"
+    assert not list((tmp_path / "data").glob("week-*.json"))
+    assert [p.name for p in weeks.iterdir()] == ["_" * len(uid)]
+    s.delete_user(uid)                     # and deleting it stays inside too
+    assert (tmp_path / "data" / "weeks").exists()
+
+
 def test_credentials_are_encrypted_at_rest(tmp_path):
     s = FileStore(str(tmp_path))
     s.put_credential(ALICE, MICROSOFT, {"refresh_token": "super-secret"}, account="a@x.invalid")

@@ -215,10 +215,26 @@ def _verify(token: str) -> dict | None:
     return payload
 
 
+def local_path(value: str | None, default: str = "/") -> str:
+    """`value` if it names a path on this host, else `default`.
+
+    `//host` is the obvious off-site redirect. `/\\host` is the same one: browsers
+    read a backslash in that position as a slash, so a check for a leading `//`
+    alone lets it straight through, and `/auth/login?next=/\\evil.example` became a
+    sign-in link that finished on somebody else's site. Control characters are
+    refused for the same reason — nothing legitimate needs them in a path.
+    """
+    v = value or ""
+    if (not v.startswith("/") or v.startswith("//") or "\\" in v
+            or any(ord(c) < 0x20 for c in v)):
+        return default
+    return v
+
+
 def make_state(return_to: str = "/") -> str:
     # Only a path is ever kept. Signing an absolute URL would turn the callback
     # into an open redirect that an attacker can point anywhere they like.
-    path = return_to if return_to.startswith("/") and not return_to.startswith("//") else "/"
+    path = local_path(return_to)
     return _sign({"n": secrets.token_urlsafe(12), "r": path[:200],
                   "exp": int(time.time()) + STATE_TTL})
 

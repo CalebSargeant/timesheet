@@ -105,6 +105,8 @@ CSS = """
  .hint{font-size:12px;color:var(--muted);margin-top:4px}
  .note{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:0 0 14px;
    font-size:13px}
+ .notes{padding:14px 20px 0}
+ .notes .note:last-child{margin-bottom:0}
  .note.bad{border-color:#f8717188;background:#f871711a}
  .note.good{border-color:#34d39988;background:#34d3991a}
  .code{font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.14em;

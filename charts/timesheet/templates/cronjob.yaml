@@ -1,58 +1,77 @@
+{{/*
+Two CronJobs from one template: a frequent refresh that stores each account's
+week, and a once-a-day run that also delivers it. They are separate objects
+because they want opposite schedules — the refresh is what keeps the live page
+current and wants to run every quarter of an hour, and `--send` on that schedule
+would mail a manager thirty times a day.
+*/}}
+{{- if and .Values.cronjob.send (and .Values.deliverJob .Values.deliverJob.enabled) -}}
+{{- fail "cronjob.send and deliverJob are both on, which would deliver twice. The refresh job no longer sends: set cronjob.send=false (and give cronjob.schedule a frequent schedule), or set deliverJob.enabled=false to keep the old single-job behaviour." -}}
+{{- end -}}
+{{- $jobs := list -}}
 {{- if .Values.cronjob.enabled -}}
+{{- $jobs = append $jobs (dict "suffix" "refresh" "send" .Values.cronjob.send "spec" .Values.cronjob) -}}
+{{- end -}}
+{{- if and .Values.deliverJob .Values.deliverJob.enabled -}}
+{{- $jobs = append $jobs (dict "suffix" "deliver" "send" true "spec" .Values.deliverJob) -}}
+{{- end -}}
+{{- range $job := $jobs }}
+{{- $spec := $job.spec }}
+---
 # kics-scan disable=caa3479d-885d-4882-9aac-95e5e78ef5c2,7c81d34c-8e5a-402b-9798-9f442630e678,8b36775e-183d-4d46-b0f7-96a6f34a723f
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: {{ include "ts.fullname" . }}-refresh
-  namespace: {{ .Release.Namespace }}
+  name: {{ include "ts.fullname" $ }}-{{ $job.suffix }}
+  namespace: {{ $.Release.Namespace }}
   labels:
-    {{- include "ts.labels" . | nindent 4 }}
+    {{- include "ts.labels" $ | nindent 4 }}
 spec:
-  schedule: {{ .Values.cronjob.schedule | quote }}
-  {{- with .Values.cronjob.timeZone }}
+  schedule: {{ $spec.schedule | quote }}
+  {{- with (default $.Values.cronjob.timeZone $spec.timeZone) }}
   timeZone: {{ . | quote }}
   {{- end }}
-  concurrencyPolicy: {{ .Values.cronjob.concurrencyPolicy }}
-  successfulJobsHistoryLimit: {{ .Values.cronjob.successfulJobsHistoryLimit }}
-  failedJobsHistoryLimit: {{ .Values.cronjob.failedJobsHistoryLimit }}
+  concurrencyPolicy: {{ $spec.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ $spec.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ $spec.failedJobsHistoryLimit }}
   jobTemplate:
     spec:
-      backoffLimit: {{ .Values.cronjob.backoffLimit }}
+      backoffLimit: {{ $spec.backoffLimit }}
       template:
         metadata:
           labels:
-            {{- include "ts.selectorLabels" . | nindent 12 }}
+            {{- include "ts.selectorLabels" $ | nindent 12 }}
         spec:
           restartPolicy: Never
-          serviceAccountName: {{ include "ts.serviceAccountName" . }}
-          {{- with .Values.image.pullSecrets }}
+          serviceAccountName: {{ include "ts.serviceAccountName" $ }}
+          {{- with $.Values.image.pullSecrets }}
           imagePullSecrets:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           securityContext:
-            {{- toYaml .Values.securityContext | nindent 12 }}
+            {{- toYaml $.Values.securityContext | nindent 12 }}
           containers:
-            - name: refresh
-              image: {{ include "ts.image" . }}
-              imagePullPolicy: {{ .Values.image.pullPolicy }}
+            - name: {{ $job.suffix }}
+              image: {{ include "ts.image" $ }}
+              imagePullPolicy: {{ $.Values.image.pullPolicy }}
               command: ["python", "-m", "timesheet.run"]
               args:
-                {{- if .Values.cronjob.send }}
+                {{- if $job.send }}
                 - "--send"
                 {{- end }}
               envFrom:
-                {{- include "ts.envFrom" . | nindent 16 }}
-              {{- with .Values.extraEnv }}
+                {{- include "ts.envFrom" $ | nindent 16 }}
+              {{- with $.Values.extraEnv }}
               env:
                 {{- toYaml . | nindent 16 }}
               {{- end }}
               securityContext:
-                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+                {{- toYaml $.Values.containerSecurityContext | nindent 16 }}
               resources:
-                {{- toYaml .Values.resources | nindent 16 }}
+                {{- toYaml $.Values.resources | nindent 16 }}
               volumeMounts:
                 - {name: tmp, mountPath: /tmp}
           volumes:
             - name: tmp
               emptyDir: {}
-{{- end -}}
+{{- end }}

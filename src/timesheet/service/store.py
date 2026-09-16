@@ -182,7 +182,7 @@ class FileStore:
             {"meta": meta, "days": [d.to_dict() for d in days], "ingest": (payload or {})}))
         return meta
 
-    def _meta_of(self, user_id: str, monday: date) -> dict | None:
+    def meta_of(self, user_id: str, monday: date) -> dict | None:
         p = self._path(user_id, monday)
         return json.loads(p.read_text()).get("meta") if p.exists() else None
 
@@ -196,7 +196,7 @@ class FileStore:
         return [Day.from_dict(x) for x in doc["days"]]
 
     def is_full(self, user_id: str, monday: date) -> bool:
-        m = self._meta_of(user_id, monday)
+        m = self.meta_of(user_id, monday)
         return _is_current(m) and bool(m.get("full"))
 
     def latest_meta(self, user_id: str) -> dict:
@@ -386,14 +386,15 @@ class PgStore:
             return None
         return [Day.from_dict(x) for x in raw]
 
-    def is_full(self, user_id: str, monday: date) -> bool:
+    def meta_of(self, user_id: str, monday: date) -> dict | None:
         with self._conn() as c:
             row = c.execute(
                 "SELECT meta FROM timesheet_week WHERE user_id=%s AND week_start=%s",
                 (user_id, monday)).fetchone()
-        if not row or row[0] is None:
-            return False
-        meta = self._json(row[0])
+        return self._json(row[0]) if row and row[0] is not None else None
+
+    def is_full(self, user_id: str, monday: date) -> bool:
+        meta = self.meta_of(user_id, monday)
         return _is_current(meta) and bool(meta.get("full"))
 
     def latest_meta(self, user_id: str) -> dict:

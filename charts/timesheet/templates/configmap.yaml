@@ -25,11 +25,12 @@ data:
   DAY_ROLLOVER_HOUR: {{ .Values.config.dayRolloverHour | quote }}
   ROTA_ENABLED: {{ .Values.config.rotaEnabled | quote }}
   ROTA_MINUTES: {{ .Values.config.rotaMinutes | quote }}
-  INCLUDE_AFTER_HOURS: {{ .Values.config.includeAfterHours | quote }}
   INCLUDE_EMAIL: {{ .Values.config.includeEmail | quote }}
   INCLUDE_CHAT: {{ .Values.config.includeChat | quote }}
   BACKFILL_WEEKS: {{ .Values.config.backfillWeeks | quote }}
   DOWNLOAD_TTL_SECONDS: {{ .Values.config.downloadTtlSeconds | quote }}
+  LIVE_MAX_AGE_SECONDS: {{ .Values.config.liveMaxAgeSeconds | quote }}
+  DELIVERY_CHAT_ENABLED: {{ .Values.config.delivery.chat | quote }}
   M365_MCP_TOKEN_CACHE: {{ .Values.config.m365McpTokenCache | quote }}
   LLM_BASE_URL: {{ .Values.config.llm.baseUrl | quote }}
   LLM_MODEL: {{ .Values.config.llm.model | quote }}
@@ -43,3 +44,9 @@ data:
   SMTP_PORT: {{ .Values.config.email.smtpPort | quote }}
   SMTP_STARTTLS: {{ .Values.config.email.smtpStartTls | quote }}
   REPORT_EMAIL_FROM: {{ .Values.config.email.from | quote }}
+  {{- with .Values.config.email.mailgunDomain }}
+  MAILGUN_DOMAIN: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.email.mailgunBaseUrl }}
+  MAILGUN_BASE_URL: {{ . | quote }}
+  {{- end }}

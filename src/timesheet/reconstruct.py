@@ -105,11 +105,42 @@ def full_day(date: datetime, ev: FullDayEvent, cfg: Config) -> Day:
     Nothing is reconstructed around it. A booked day off is a fact, not an estimate,
     so a stray commit or a standup invite that stayed in the calendar can't turn
     leave back into a working day — and it isn't clipped at 'now' either, because a
-    whole day of leave is known up front, not accrued hour by hour."""
+    whole day of leave is known up front, not accrued hour by hour.
+
+    Its length is the person's own normal day (`min_day_minutes`). A four-day-week
+    contract whose days are six hours got eight hours of leave out of a separate
+    constant, which is both wrong and, on a timesheet somebody signs, awkward."""
     start = _at(date, cfg.day_start)
-    block = Block(start, start + timedelta(minutes=cfg.full_day_minutes),
+    block = Block(start, start + timedelta(minutes=cfg.min_day_minutes),
                   ev.project, ev.taak, ev.kind)
     return Day(date=date, blocks=[block], dropped_after_hours=0)
+
+
+def _budgeted(chunks: list[Interval], budget: int) -> list[Interval]:
+    """`chunks` trimmed to `budget` minutes of fillable time.
+
+    This is what keeps the day the length the evidence says it is. Free time runs
+    to the last thing in the calendar, so without a budget a single 20:00 call
+    stretched the window to 21:00 and every quarter of an hour between the end of
+    the working day and that call was filled in as admin — one hour of evening
+    incident work reported as four and a half hours of invented afternoon.
+
+    Anchors keep their real times either way; what is bounded is how much
+    reconstructed work may be placed around them.
+    """
+    out: list[Interval] = []
+    placed = 0
+    for start, end in chunks:
+        if placed >= budget:
+            break
+        span = mins((start, end))
+        if placed + span > budget:
+            end = start + timedelta(minutes=budget - placed)
+            if end <= start:
+                break
+        out.append((start, end))
+        placed += mins((start, end))
+    return out
 
 
 def _chunks(free: list[Interval], cfg: Config) -> list[Interval]:
@@ -242,6 +273,10 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
         if day_end <= start:                     # the day hasn't really started yet
             return Day(date=date, blocks=[], dropped_after_hours=0)
     free = free_intervals((start, day_end), [(b.start, b.end) for b in anchors])
+    # What may still be placed around the anchors. `target` is the whole day; the
+    # anchors are the part of it that is already accounted for and already sits at
+    # a real time, so the rest is what gets reconstructed.
+    fill_budget = max(0, target - fixed_min)
 
     # The day's GitHub work themes, clustered PER KIND so PRs, issues, reviews and
     # commits each surface with their own label (Pull requests / Issues / Code review
@@ -262,11 +297,11 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
     # is labelled as correspondence; then about `activity_min` of what is left goes
     # to the day's GitHub themes; the remainder is admin. So the sheet's hours
     # track the evidence, and a generic admin label is only the leftover.
-    free_total = sum(mins(iv) for iv in free)
+    free_total = min(sum(mins(iv) for iv in free), fill_budget)
     comms_budget = max(0, min(comms_min, free_total - cfg.admin_floor_minutes))
     coding_budget = max(0, min(round(activity_min),
                                free_total - comms_budget - cfg.admin_floor_minutes))
-    chunks = _chunks(free, cfg)
+    chunks = _budgeted(_chunks(free, cfg), fill_budget)
     admin_tasks = tuple(labels.admin_tasks) or (labels.admin_project,)
     # Each theme gets one contiguous run of the day, sized by its weight. Cycling
     # per chunk instead produced Development/Security/Development/Security down

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "timesheet"
-version = "0.2.3"
+version = "0.3.0"
 description = "Reconstruct a working week from calendar, mail, chat and GitHub activity"
 readme = "README.md"
 license = "MIT"

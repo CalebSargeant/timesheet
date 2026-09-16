@@ -2,9 +2,10 @@
 
 `build_week` is pure — it takes already-collected raw data — so the whole
 reconstruction stays unit-testable offline with no network and no account.
-`collect_week` does the live pulls, and takes a `Sources` holding one person's
+`collect` does the live pulls, and takes a `Sources` holding one person's
 credentials rather than reading the environment, which is what lets a single
-process serve many users without any chance of crossing them over.
+process serve many users without any chance of crossing them over. It returns a
+`WeekBuild`: the days, and a line for every source that could not be read.
 """
 from __future__ import annotations
 
@@ -29,6 +30,19 @@ from .reconstruct import reconstruct_week
 log = logging.getLogger(__name__)
 
 CALENDAR_SOURCES = ("mcp", "ics", "graph", "none")
+
+
+@dataclass(frozen=True)
+class WeekBuild:
+    """One week's days, plus what could not be read while building them.
+
+    `problems` exists so a thin week can say why it is thin. A page that shows
+    nothing and explains nothing is indistinguishable from a week in which
+    nothing happened, and that is precisely the case where somebody needs to be
+    told to reconnect an account.
+    """
+    days: list[Day]
+    problems: tuple[str, ...] = ()
 
 
 def _monday(d: date) -> date:
@@ -97,6 +111,12 @@ def build_week(week_start: date, raw_meetings: list[dict], raw_commits: list[dic
                             events=events, full_days=full_days)
 
 
+def _reason(what: str, exc: Exception) -> str:
+    """One failed source, in a sentence fit to show the person whose week it is."""
+    text = str(exc).strip() or exc.__class__.__name__
+    return f"{what}: {text[:200]}"
+
+
 def _calendar(sources: Sources, win_start: datetime, win_end: datetime) -> list[dict]:
     source = sources.calendar_source
     if source == "mcp":
@@ -112,19 +132,20 @@ def _calendar(sources: Sources, win_start: datetime, win_end: datetime) -> list[
 
 
 def _correspondence(sources: Sources, cfg: Config, win_start: datetime,
-                    win_end: datetime) -> list[dict]:
+                    win_end: datetime) -> tuple[list[dict], list[str]]:
     """Mail and chat for the window, from whichever of them is switched on.
 
-    Each source is attempted independently and a failure in one is logged and
+    Each source is attempted independently and a failure in one is reported and
     skipped rather than raised. Correspondence adds hours to a day; losing it
     understates a week, which is recoverable. Letting it abort the run loses the
     week entirely, which is not.
     """
     if sources.calendar_source != "mcp" or not sources.m365:
-        return []
+        return [], []
     from .collectors import m365_mcp
 
     out: list[dict] = []
+    problems: list[str] = []
     wanted: list[tuple[str, callable]] = []
     if cfg.include_email:
         wanted.append(("sent mail",
@@ -134,7 +155,7 @@ def _correspondence(sources: Sources, cfg: Config, win_start: datetime,
                        lambda: m365_mcp.fetch_mail(win_start, win_end, sent=False,
                                                    session=sources.m365)))
     if cfg.include_chat:
-        wanted.append(("chat",
+        wanted.append(("Teams chat",
                        lambda: m365_mcp.fetch_chat(win_start, win_end, session=sources.m365)))
 
     for what, pull in wanted:
@@ -142,40 +163,61 @@ def _correspondence(sources: Sources, cfg: Config, win_start: datetime,
             out.extend(pull())
         # Deliberately broad: a collector can fail in as many ways as the network
         # and a third-party schema allow, and a thin week beats no week.
-        except Exception:
+        except Exception as e:
             log.warning("could not read %s; continuing without it", what, exc_info=True)
-    return out
+            problems.append(_reason(what, e))
+    return out, problems
 
 
 def _github(sources: Sources, cfg: Config, since: str, until: str, *,
-            full: bool) -> list[dict]:
+            full: bool) -> tuple[list[dict], list[str]]:
+    """Commits, and optionally the items a commit search misses.
+
+    Commits are wrapped like everything else. They are the backbone of the sheet,
+    which is exactly why an unwrapped failure here used to take the calendar down
+    with it and leave the whole week blank — a rate limit or an expired token on
+    one source must cost that source and nothing more.
+    """
     if not sources.github:
-        return []
+        return [], []
     from .collectors import github as gh
 
-    rows = gh.fetch_commits(since, until, client=sources.github)
+    rows: list[dict] = []
+    problems: list[str] = []
+    try:
+        rows += gh.fetch_commits(since, until, client=sources.github)
+    except Exception as e:
+        log.warning("commit fetch failed; continuing without it", exc_info=True)
+        problems.append(_reason("GitHub commits", e))
     # PRs opened + issues authored: one search each, cheap enough for a web request.
     if cfg.include_authored:
         try:
             rows += gh.fetch_authored(since, until, client=sources.github)
-        except Exception:
+        except Exception as e:
             log.debug("authored-item fetch failed", exc_info=True)
+            problems.append(_reason("GitHub pull requests and issues", e))
     # Reviews: a per-PR REST fan-out, so background refresh only.
     if full and cfg.include_reviews:
         try:
             rows += gh.fetch_reviews(since, until, client=sources.github)
-        except Exception:
+        except Exception as e:
             log.debug("review fetch failed", exc_info=True)
-    return rows
+            problems.append(_reason("GitHub reviews", e))
+    return rows, problems
 
 
-def collect_week(week_start: date, cfg: Config, sources: Sources | None = None, llm=None, *,
-                 full: bool = False) -> list[Day]:
-    """Live pull for one person's week, then build.
+def collect(week_start: date, cfg: Config, sources: Sources | None = None, llm=None, *,
+            full: bool = False) -> WeekBuild:
+    """Live pull for one person's week, then build — reporting what failed.
 
     `full` adds the heavier signals — PR reviews, and the mail and chat reads —
     that a page view can't afford. The web path calls this without it (calendar
     and commits only, fast); the scheduled refresh calls it with.
+
+    Every source is read independently. One that fails costs its own signal and
+    says so in `problems`; it does not cost the week. Before that was true, a
+    Microsoft connection that had quietly expired produced an empty page with no
+    explanation on it, which reads exactly like a week in which nobody worked.
     """
     sources = sources or Sources.from_env()
     tz = ZoneInfo(cfg.tz)
@@ -183,13 +225,32 @@ def collect_week(week_start: date, cfg: Config, sources: Sources | None = None, 
     win_start = datetime(monday.year, monday.month, monday.day, tzinfo=tz)
     win_end = win_start + timedelta(days=7)
 
-    raw_meetings = _calendar(sources, win_start, win_end)
+    problems: list[str] = []
+    try:
+        raw_meetings = _calendar(sources, win_start, win_end)
+    except Exception as e:
+        log.warning("calendar read failed; continuing without it", exc_info=True)
+        raw_meetings = []
+        problems.append(_reason("calendar", e))
+
     since = monday.isoformat()
     until = (monday + timedelta(days=6)).isoformat()
-    raw_commits = _github(sources, cfg, since, until, full=full)
-    raw_activity = _correspondence(sources, cfg, win_start, win_end) if full else []
+    raw_commits, gh_problems = _github(sources, cfg, since, until, full=full)
+    problems += gh_problems
 
-    return build_week(monday, raw_meetings, raw_commits, cfg, llm, raw_activity)
+    raw_activity: list[dict] = []
+    if full:
+        raw_activity, comms_problems = _correspondence(sources, cfg, win_start, win_end)
+        problems += comms_problems
+
+    days = build_week(monday, raw_meetings, raw_commits, cfg, llm, raw_activity)
+    return WeekBuild(days=days, problems=tuple(problems))
+
+
+def collect_week(week_start: date, cfg: Config, sources: Sources | None = None, llm=None, *,
+                 full: bool = False) -> list[Day]:
+    """`collect`, for callers that only want the days."""
+    return collect(week_start, cfg, sources, llm, full=full).days
 
 
 def build_from_ingest(payload: dict, cfg: Config, sources: Sources | None = None, llm=None, *,

@@ -59,9 +59,17 @@ def test_leave_day_reports_leave_instead_of_a_padded_workday():
     days, cfg = _week([LEAVE, STANDUP], [COMMIT])
     friday = _friday(days)
     assert [b.project for b in friday.blocks] == [cfg.labels.leave_project]
-    assert friday.minutes == cfg.full_day_minutes          # one honest 8h leave row
+    assert friday.minutes == cfg.min_day_minutes          # one honest normal-day leave row
     assert not any(b.kind in ("admin", "focus", "meeting") for b in friday.blocks)
     assert not any("standup" in b.taak.lower() for b in friday.blocks)
+
+
+def test_leave_is_as_long_as_that_persons_own_day():
+    """Not a fixed eight hours: somebody whose day is six gets six hours of leave,
+    because that is what a day off costs them."""
+    from dataclasses import replace
+    days, _ = _week([LEAVE], [], cfg=replace(BASE, min_day_minutes=360))
+    assert _friday(days).minutes == 360
 
 
 def test_leave_day_is_reported_even_with_no_other_signal():

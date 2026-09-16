@@ -37,10 +37,23 @@ def table(week: list[Day], loc: i18n.Locale) -> tuple[str, int]:
             f'<td colspan="3">{hm(grand)}</td></tr></tfoot></table></div>'), grand
 
 
+def _notes(good: list[str] | None, bad: list[str] | None) -> str:
+    """Anything the reader has to know about the numbers below them.
+
+    A thin week and a week in which nothing happened look identical on a
+    timesheet, so when a source could not be read it is said here, above the
+    table, rather than left in a log nobody is looking at.
+    """
+    rows = "".join(f'<div class="note bad">{esc(t)}</div>' for t in (bad or []) if t)
+    rows += "".join(f'<div class="note good">{esc(t)}</div>' for t in (good or []) if t)
+    return f'<div class="notes">{rows}</div>' if rows else ""
+
+
 def build_week(week: list[Day], *, locale: str | i18n.Locale | None = None,
                title: str | None = None, download_url: str | None = None,
                generated: str | None = None, subtitle: str | None = None,
-               nav_html: str = "", account_html: str = "") -> str:
+               nav_html: str = "", account_html: str = "", send_html: str = "",
+               notes: list[str] | None = None, bad_notes: list[str] | None = None) -> str:
     loc = locale if isinstance(locale, i18n.Locale) else i18n.get(locale)
     body, _ = table(week, loc)
     dl = (f'<a class="btn" href="{esc(download_url)}">⬇ {esc(loc.download)}</a>'
@@ -49,5 +62,7 @@ def build_week(week: list[Day], *, locale: str | i18n.Locale | None = None,
     sub = f'<div class="sub">{esc(subtitle)}</div>' if subtitle else ""
     nav = f'<nav class="periods">{nav_html}</nav>' if nav_html else ""
     head = (f'<header><div class="titles"><h1>🕑 {esc(title or loc.title)}</h1>{sub}</div>'
-            f"{account_html}{gen}{dl}</header>")
-    return page(title or loc.title, f'<div class="card">{head}{nav}{body}</div>', lang=loc.code)
+            f"{account_html}{gen}{send_html}{dl}</header>")
+    return page(title or loc.title,
+                f'<div class="card">{head}{nav}{_notes(notes, bad_notes)}{body}</div>',
+                lang=loc.code)

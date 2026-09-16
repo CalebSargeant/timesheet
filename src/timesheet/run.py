@@ -28,9 +28,9 @@ from zoneinfo import ZoneInfo
 
 from .config import Config
 from .llm import make_llm
-from .pipeline import Sources, collect_week
+from .pipeline import Sources, collect
 from .service import crypto, delivery, users
-from .service.email import Mailer
+from .service import email as mailer_mod
 from .service.store import GITHUB, MICROSOFT, make_store
 
 log = logging.getLogger("timesheet.run")
@@ -73,34 +73,55 @@ def _sources(store, user: users.User) -> Sources:
 
 
 def refresh_user(store, user: users.User, week: date, *, env_cfg: Config,
-                 send: bool, backfill: int, mailer: Mailer | None = None,
+                 send: bool, backfill: int, mailer=None,
                  public_url: str = "") -> dict:
     """Rebuild one account's week (plus any missing recent weeks) and report."""
     cfg = env_cfg.with_settings(users.for_config(user.settings))
     sources = _sources(store, user)
     llm = make_llm(cfg)
 
-    days = collect_week(week, cfg, sources, llm=llm, full=True)
+    build = collect(week, cfg, sources, llm=llm, full=True)
+    days = build.days
     monday = days[0].date.date() if days else _monday(week)
-    meta = store.save(user.id, monday, {}, days, full=True)
-    log.info("%s: week %s — %s across %s days",
-             user.login, meta["week_start"], meta["total_hm"], meta["days"])
+    for problem in build.problems:
+        log.warning("%s: %s", user.login, problem)
+    if days or not build.problems:
+        meta = store.save(user.id, monday, {}, days, full=True)
+        log.info("%s: week %s — %s across %s days",
+                 user.login, meta["week_start"], meta["total_hm"], meta["days"])
+    else:
+        # Everything that could be read failed. Writing that over a good week
+        # would turn one bad run into a week nobody can get back, and the page
+        # would serve the blank as though it were the answer.
+        meta = store.meta_of(user.id, monday) or {"week_start": monday.isoformat(),
+                                                  "total_hm": "0:00", "total_minutes": 0}
+        log.error("%s: nothing could be read for %s; keeping the stored week",
+                  user.login, monday)
 
     for i in range(1, backfill + 1):
         m = _monday(week) - timedelta(days=7 * i)
         if store.is_full(user.id, m):
             continue
         try:
-            past = collect_week(m, cfg, sources, llm=llm, full=True)
+            older = collect(m, cfg, sources, llm=llm, full=True)
         except Exception:
             log.warning("%s: backfill of %s failed", user.login, m, exc_info=True)
             continue
-        store.save(user.id, m, {}, past, full=True)
-        log.info("%s: backfilled %s (%d days)", user.login, m.isoformat(), len(past))
+        if not older.days and older.problems:
+            # Same rule as the current week, and for the same reason: a week
+            # marked full is never rebuilt, so storing a failed read as "full"
+            # would make it permanent.
+            log.warning("%s: backfill of %s read nothing; leaving it", user.login, m)
+            continue
+        store.save(user.id, m, {}, older.days, full=True)
+        log.info("%s: backfilled %s (%d days)", user.login, m.isoformat(), len(older.days))
 
-    result = {"user": user.login, "week": meta["week_start"], "total": meta["total_hm"],
-              "delivery": "not requested"}
-    if send:
+    result = {"user": user.login, "week": meta["week_start"],
+              "total": meta.get("total_hm", "0:00"), "delivery": "not requested"}
+    if send and not days:
+        result["delivery"] = "nothing to send"
+        log.warning("%s: not delivering an empty week", user.login)
+    elif send:
         out = delivery.send(user, days, meta, session=sources.m365, mailer=mailer,
                             public_url=public_url)
         result["delivery"] = out.describe()
@@ -141,7 +162,7 @@ def main(argv: list[str]) -> int:
         else datetime.now(ZoneInfo(env_cfg.tz)).date()
     send = "--send" in flags or "--email" in flags      # --email kept for old cron entries
     backfill = int(os.environ.get("BACKFILL_WEEKS", "6"))
-    mailer = Mailer.from_env()
+    mailer = mailer_mod.from_env()
     public_url = os.environ.get("PUBLIC_URL", "")
 
     failures = 0

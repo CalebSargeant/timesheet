@@ -1,38 +1,66 @@
 """Sending a timesheet by email.
 
-SMTP settings belong to the deployment, not to the user: an account holder gives
+Mail settings belong to the deployment, not to the user: an account holder gives
 a *recipient*, never a mail server's credentials, so nobody can turn this into an
 open relay by filling in a settings form. The message is sent from the
 deployment's own address with the user's address as `Reply-To`, which is what
 makes a manager's reply land with the person whose hours these are.
 
-A missing or misconfigured mailer logs and returns False rather than raising, so
-a scheduled run for twenty people is not lost because one of them has a typo in a
-manager's address.
+Two transports, one message:
+
+  * **SMTP** — `SMTP_HOST` and friends. Works with any provider, Mailgun's SMTP
+    endpoint included.
+  * **Mailgun's HTTP API** — `MAILGUN_API_KEY` and `MAILGUN_DOMAIN`. Same
+    message, posted over 443. This exists because plenty of clusters and hosts
+    block outbound 25/465/587 outright, and there the SMTP path cannot be made
+    to work no matter how correct the credentials are.
+
+The message is built once, as MIME, and handed to whichever transport is
+configured — so an attachment, a Reply-To or a From that works on one works on
+the other.
+
+Failure raises `MailError` with a reason fit to show a human. Callers isolate:
+`delivery.send` turns it into a reported failure for one account, and a scheduled
+run for twenty people is never lost because one of them has a typo in a manager's
+address.
 """
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import smtplib
 import ssl
+import urllib.error
+import urllib.parse
+import uuid
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import formataddr, parseaddr
 
+from ..net import InsecureUrl, open_url
 from ..timeutil import hm
 
 log = logging.getLogger(__name__)
 
 XLSX_MIME = ("application", "vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+MAILGUN_DEFAULT_BASE = "https://api.mailgun.net"
+
 
 class MailError(RuntimeError):
     """The message could not be sent, with a reason fit to show the user."""
 
 
+def _bool(value: str, default: bool = False) -> bool:
+    if value == "":
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
 @dataclass(frozen=True)
 class Mailer:
+    """The SMTP transport."""
     host: str = ""
     port: int = 587
     user: str = ""
@@ -45,65 +73,223 @@ class Mailer:
     def configured(self) -> bool:
         return bool(self.host and self.sender)
 
-    @staticmethod
-    def from_env(env: dict | None = None) -> Mailer:
-        e = env or os.environ
-        return Mailer(
-            host=e.get("SMTP_HOST", ""),
-            port=int(e.get("SMTP_PORT", "587")),
-            user=e.get("SMTP_USER", ""),
-            password=e.get("SMTP_PASSWORD", ""),
-            sender=e.get("REPORT_EMAIL_FROM", ""),
-            starttls=(e.get("SMTP_STARTTLS", "true").lower() in ("1", "true", "yes", "on")),
-        )
+    def missing(self) -> str:
+        """What a deployment still has to set, in the words of its own settings."""
+        gaps = [name for name, value in (("SMTP_HOST", self.host),
+                                         ("REPORT_EMAIL_FROM", self.sender)) if not value]
+        return ("set " + " and ".join(gaps)) if gaps else ""
+
+    def describe(self) -> str:
+        return f"SMTP {self.host}:{self.port} as {self.sender}"
+
+    def _open(self) -> smtplib.SMTP:
+        s = smtplib.SMTP(self.host, self.port, timeout=self.timeout)
+        if self.starttls:
+            s.starttls(context=ssl.create_default_context())
+        if self.user and self.password:
+            s.login(self.user, self.password)
+        return s
+
+    def check(self) -> None:
+        """Connect, negotiate TLS, sign in — then hang up without sending.
+
+        Everything that usually breaks (a blocked port, a wrong password, a
+        certificate nobody trusts) breaks here, and nobody receives an email to
+        find that out.
+        """
+        if not self.configured:
+            raise MailError(f"no SMTP server configured — {self.missing()}")
+        try:
+            with self._open():
+                pass
+        except (OSError, smtplib.SMTPException) as e:
+            raise MailError(f"{self.describe()}: {e}") from e
 
     def send(self, message: EmailMessage) -> None:
         if not self.configured:
-            raise MailError("this deployment has no SMTP server configured")
+            raise MailError(f"no SMTP server configured — {self.missing()}")
         try:
-            with smtplib.SMTP(self.host, self.port, timeout=self.timeout) as s:
-                if self.starttls:
-                    s.starttls(context=ssl.create_default_context())
-                if self.user and self.password:
-                    s.login(self.user, self.password)
+            with self._open() as s:
                 s.send_message(message)
         except (OSError, smtplib.SMTPException) as e:
             raise MailError(f"could not send the message: {e}") from e
 
 
-def build_message(xlsx: bytes, meta: dict, *, to: str, mailer: Mailer, strings,
+@dataclass(frozen=True)
+class MailgunMailer:
+    """Mailgun's HTTP API, for hosts where outbound SMTP is not an option."""
+    api_key: str = ""
+    domain: str = ""
+    sender: str = ""
+    base_url: str = MAILGUN_DEFAULT_BASE
+    timeout: int = 30
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_key and self.domain and self.sender)
+
+    def missing(self) -> str:
+        gaps = [name for name, value in (("MAILGUN_API_KEY", self.api_key),
+                                         ("MAILGUN_DOMAIN", self.domain),
+                                         ("REPORT_EMAIL_FROM", self.sender)) if not value]
+        return ("set " + " and ".join(gaps)) if gaps else ""
+
+    def describe(self) -> str:
+        return f"Mailgun {self.domain} via {self.base_url} as {self.sender}"
+
+    @property
+    def _url(self) -> str:
+        return f"{self.base_url.rstrip('/')}/v3/{urllib.parse.quote(self.domain)}/messages.mime"
+
+    def _post(self, fields: list[tuple[str, str]],
+              files: list[tuple[str, str, bytes]]) -> str:
+        """One multipart POST. Returns Mailgun's reply, raises MailError otherwise."""
+        boundary = f"----timesheet{uuid.uuid4().hex}"
+        parts: list[bytes] = []
+        for name, value in fields:
+            parts.append(
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n"
+                f"{value}\r\n".encode())
+        for name, filename, blob in files:
+            parts.append(
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"; "
+                f"filename=\"{filename}\"\r\n"
+                "Content-Type: application/octet-stream\r\n\r\n".encode())
+            parts.append(blob + b"\r\n")
+        parts.append(f"--{boundary}--\r\n".encode())
+
+        token = base64.b64encode(f"api:{self.api_key}".encode()).decode()
+        try:
+            with open_url(self._url, data=b"".join(parts), timeout=self.timeout, headers={
+                "Authorization": f"Basic {token}",
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+            }) as r:
+                return r.read().decode(errors="replace")[:300]
+        except urllib.error.HTTPError as e:
+            # Mailgun puts the reason in the body — an unverified domain, a
+            # sandbox recipient that was never authorised, a key for the wrong
+            # region. Dropping it leaves only "HTTP 401", which explains nothing.
+            detail = e.read().decode(errors="replace")[:300] if e.fp else ""
+            raise MailError(f"Mailgun refused the message (HTTP {e.code}): {detail}") from e
+        except urllib.error.URLError as e:
+            raise MailError(f"cannot reach {self.base_url}: {e.reason}") from e
+        except InsecureUrl as e:
+            raise MailError(str(e)) from e
+
+    def check(self) -> None:
+        """Ask Mailgun whether the key opens this domain, without sending.
+
+        A 200 here means the credentials and the region are right, which is the
+        half of a Mailgun setup that is usually wrong: a key from the US region
+        pointed at `api.eu.mailgun.net` fails exactly like a bad key.
+        """
+        if not self.configured:
+            raise MailError(f"Mailgun is not fully configured — {self.missing()}")
+        url = (f"{self.base_url.rstrip('/')}/v3/domains/"
+               f"{urllib.parse.quote(self.domain)}")
+        token = base64.b64encode(f"api:{self.api_key}".encode()).decode()
+        try:
+            with open_url(url, timeout=self.timeout,
+                          headers={"Authorization": f"Basic {token}"}) as r:
+                r.read(1)
+        except urllib.error.HTTPError as e:
+            hint = (" — check MAILGUN_BASE_URL: an EU domain answers on "
+                    "https://api.eu.mailgun.net" if e.code in (401, 404) else "")
+            raise MailError(f"Mailgun rejected the key for {self.domain} "
+                            f"(HTTP {e.code}){hint}") from e
+        except urllib.error.URLError as e:
+            raise MailError(f"cannot reach {self.base_url}: {e.reason}") from e
+        except InsecureUrl as e:
+            raise MailError(str(e)) from e
+
+    def send(self, message: EmailMessage) -> None:
+        if not self.configured:
+            raise MailError(f"Mailgun is not fully configured — {self.missing()}")
+        recipients = [a for a in (message.get_all("To") or []) if a]
+        if not recipients:
+            raise MailError("no recipient on the message")
+        self._post([("to", ", ".join(recipients))],
+                   [("message", "timesheet.eml", bytes(message))])
+
+
+def from_env(env: dict | None = None) -> Mailer | MailgunMailer:
+    """The transport this deployment configured.
+
+    Mailgun's API wins when it is configured, because somebody who set an API key
+    did so precisely to stop using SMTP.
+    """
+    e = env if env is not None else os.environ
+    sender = e.get("REPORT_EMAIL_FROM", "")
+    if e.get("MAILGUN_API_KEY") or e.get("MAILGUN_DOMAIN"):
+        return MailgunMailer(
+            api_key=e.get("MAILGUN_API_KEY", ""),
+            domain=e.get("MAILGUN_DOMAIN", ""),
+            sender=sender,
+            base_url=e.get("MAILGUN_BASE_URL", "") or MAILGUN_DEFAULT_BASE,
+        )
+    return Mailer(
+        host=e.get("SMTP_HOST", ""),
+        port=int(e.get("SMTP_PORT", "587")),
+        user=e.get("SMTP_USER", ""),
+        password=e.get("SMTP_PASSWORD", ""),
+        sender=sender,
+        starttls=_bool(e.get("SMTP_STARTTLS", ""), True),
+    )
+
+
+def _envelope(*, to: str, mailer, subject: str, body: str, sender_name: str = "",
+              reply_to: str = "") -> EmailMessage:
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = formataddr((sender_name or "Timesheet", parseaddr(mailer.sender)[1]))
+    msg["To"] = to
+    if reply_to:
+        msg["Reply-To"] = reply_to
+    msg.set_content(body)
+    return msg
+
+
+def build_message(xlsx: bytes, meta: dict, *, to: str, mailer, strings,
                   manager_name: str = "", sender_name: str = "",
                   reply_to: str = "", public_url: str = "") -> EmailMessage:
     week = meta.get("week_start", "")
     total = hm(meta.get("total_minutes", 0))
     greeting = f" {manager_name.split()[0]}" if manager_name.strip() else ""
 
-    msg = EmailMessage()
-    msg["Subject"] = strings.mail_subject.format(week=week, total=total)
-    msg["From"] = formataddr((sender_name or "Timesheet", parseaddr(mailer.sender)[1]))
-    msg["To"] = to
-    if reply_to:
-        msg["Reply-To"] = reply_to
-    msg.set_content(strings.mail_body.format(
-        greeting=greeting, week=week, total=total,
-        url=public_url or "", sender=sender_name or ""))
+    msg = _envelope(to=to, mailer=mailer, sender_name=sender_name, reply_to=reply_to,
+                    subject=strings.mail_subject.format(week=week, total=total),
+                    body=strings.mail_body.format(
+                        greeting=greeting, week=week, total=total,
+                        url=public_url or "", sender=sender_name or ""))
     msg.add_attachment(xlsx, maintype=XLSX_MIME[0], subtype=XLSX_MIME[1],
                        filename=f"timesheet-{week}.xlsx")
     return msg
 
 
-def send_weekly(xlsx: bytes, meta: dict, *, to: str, strings, mailer: Mailer | None = None,
+def send_weekly(xlsx: bytes, meta: dict, *, to: str, strings, mailer=None,
                 manager_name: str = "", sender_name: str = "", reply_to: str = "",
-                public_url: str = "") -> bool:
-    mailer = mailer or Mailer.from_env()
-    if not to or not mailer.configured:
-        log.info("email skipped: %s", "no recipient" if not to else "no SMTP configured")
-        return False
-    try:
-        mailer.send(build_message(xlsx, meta, to=to, mailer=mailer, strings=strings,
-                                  manager_name=manager_name, sender_name=sender_name,
-                                  reply_to=reply_to, public_url=public_url))
-    except MailError as e:
-        log.warning("email to %s failed: %s", to, e)
-        return False
-    return True
+                public_url: str = "") -> None:
+    """Send one period's sheet. Raises `MailError` with the reason if it doesn't go."""
+    mailer = mailer or from_env()
+    if not to:
+        raise MailError("no recipient configured")
+    mailer.send(build_message(xlsx, meta, to=to, mailer=mailer, strings=strings,
+                              manager_name=manager_name, sender_name=sender_name,
+                              reply_to=reply_to, public_url=public_url))
+
+
+def send_test(to: str, *, strings, mailer=None, sender_name: str = "", reply_to: str = "",
+              public_url: str = "", xlsx: bytes = b"") -> None:
+    """A test message to the account holder, shaped like the real one."""
+    mailer = mailer or from_env()
+    msg = _envelope(
+        to=to, mailer=mailer, sender_name=sender_name, reply_to=reply_to,
+        subject=f"[test] {strings.mail_subject.format(week='—', total='0:00')}",
+        body=("This is a test from your timesheet.\n\n"
+              "If it arrived, delivery works: the same server, the same From "
+              "address and the same attachment are used for the real thing.\n"
+              f"{public_url}\n"))
+    if xlsx:
+        msg.add_attachment(xlsx, maintype=XLSX_MIME[0], subtype=XLSX_MIME[1],
+                           filename="timesheet-test.xlsx")
+    mailer.send(msg)

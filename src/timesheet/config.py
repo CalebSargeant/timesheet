@@ -32,7 +32,11 @@ from . import i18n
 # v11: admin blocks can be relabelled from real email/Teams activity.
 # v12: email (sent AND received) and chat activity COUNT as time, clipped against
 #      meetings and capped per source, and get their own labelled blocks.
-RECONSTRUCT_VERSION = 12
+# v13: a day is only as long as its estimated effort. Free time still runs to the
+#      last thing in the calendar, but only `target` minutes of it are filled, so
+#      one evening meeting no longer pads the afternoon before it with admin.
+#      Leave books the person's own normal day instead of a fixed eight hours.
+RECONSTRUCT_VERSION = 13
 
 
 @dataclass(frozen=True)
@@ -79,7 +83,6 @@ class Config:
     min_block_minutes: int = 30
     max_focus_minutes: int = 120
     max_admin_minutes: int = 90
-    include_after_hours: bool = False                    # drop evening/weekend commit sessions
 
     # Morning on-call / standby. Off by default: most people don't have one.
     rota_enabled: bool = False
@@ -98,7 +101,6 @@ class Config:
     # that are merely 'free' (desk bookings) are unaffected.
     full_day_owns_day: bool = True
     full_day_show_as: tuple[str, ...] = ("busy", "oof")
-    full_day_minutes: int = 480                          # booked as a normal 8h day
     full_day_max_span: int = 60                          # sanity bound on a multi-day event
     leave_markers: tuple[str, ...] = i18n.LEAVE_MARKERS
     leave_blank_subjects: tuple[str, ...] = i18n.BLANK_SUBJECTS
@@ -192,7 +194,6 @@ class Config:
             max_day_minutes=_i("MAX_DAY_MINUTES", 840),
             rota_enabled=_b("ROTA_ENABLED", False),
             rota_minutes=_i("ROTA_MINUTES", 75),
-            include_after_hours=_b("INCLUDE_AFTER_HOURS", False),
             include_reviews=_b("INCLUDE_REVIEWS", True),
             include_authored=_b("INCLUDE_AUTHORED", True),
             include_email=_b("INCLUDE_EMAIL", True),

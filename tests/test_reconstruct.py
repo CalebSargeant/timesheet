@@ -281,3 +281,63 @@ def test_merging_cannot_recreate_a_mega_block():
                     "Security", "same", "focus") for i in range(4)]
     merged = _merge_repeats(blocks, CFG)
     assert all(b.minutes <= CFG.max_focus_minutes for b in merged)
+
+
+# --- a day is only as long as the evidence for it ---------------------------
+
+
+def _day(meetings=(), commits=(), events=(), cfg=CFG):
+    date = datetime(2026, 7, 20, 0, 0, tzinfo=TZ)
+    return reconstruct_day(date, list(meetings), list(commits), cfg, TZ, events=list(events))
+
+
+def _meeting(h1, m1, h2, m2, subject="Sync"):
+    from timesheet.model import Meeting
+    date = datetime(2026, 7, 20, 0, 0, tzinfo=TZ)
+    return Meeting(date.replace(hour=h1, minute=m1), date.replace(hour=h2, minute=m2),
+                   "Meeting", subject)
+
+
+def test_one_evening_meeting_does_not_pad_the_afternoon_before_it():
+    """The over-estimate this fixes: free time runs to the last thing in the
+    calendar, so an 20:00 incident call used to stretch the window to 21:00 and
+    fill every quarter of an hour from 16:30 onwards with invented admin —
+    a 12.5 hour day out of one meeting and one call."""
+    day = _day([_meeting(9, 0, 10, 0, "Standup"), _meeting(20, 0, 21, 0, "Incident call")])
+    assert day.minutes == CFG.min_day_minutes
+    assert day.blocks[-1].taak == "Incident call"          # the call is still reported
+    assert not any(b.kind == "admin" and b.start.hour >= 17 for b in day.blocks)
+
+
+def test_a_meeting_before_the_day_opens_is_not_charged_twice():
+    """It is counted in the day's length and then placed at its real time; the
+    reconstructed part shrinks to make room, rather than being added on top."""
+    day = _day([_meeting(5, 0, 5, 30, "Early call")])
+    assert day.minutes == CFG.min_day_minutes
+
+
+def test_a_heavy_day_still_runs_past_the_floor():
+    """The budget bounds invention, not evidence. Six hours of meetings plus a
+    day's coding is a long day and has to be reported as one."""
+    meetings = [_meeting(9, 0, 12, 0, "Workshop"), _meeting(13, 0, 16, 0, "Planning")]
+    commits = [Commit(datetime(2026, 7, 20, h, 0, tzinfo=TZ), "infra", f"fix: thing {h}")
+               for h in (8, 17, 19)]
+    day = _day(meetings, commits)
+    assert day.minutes > CFG.min_day_minutes
+
+
+def test_the_day_adds_up_to_its_blocks():
+    """The total on the sheet is the sum of its rows, in every shape of day —
+    the one property a manager can check by eye."""
+    for meetings in ([], [_meeting(9, 0, 10, 0)], [_meeting(9, 0, 10, 0),
+                                                   _meeting(20, 0, 21, 0)],
+                     [_meeting(5, 0, 5, 30)]):
+        day = _day(meetings or [], [Commit(datetime(2026, 7, 20, 11, 0, tzinfo=TZ),
+                                           "infra", "fix: a thing")])
+        assert day.minutes == sum(b.minutes for b in day.blocks)
+
+
+def test_no_block_is_left_overlapping_after_the_budget_trims_the_last_one():
+    day = _day([_meeting(9, 0, 10, 0), _meeting(20, 0, 21, 0)])
+    for a, b in pairwise(day.blocks):
+        assert a.end <= b.start

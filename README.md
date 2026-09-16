@@ -5,8 +5,8 @@
 Fills in your timesheet from what you already did, so you never do it by hand.
 
 It reconstructs a defensible working week out of the signals you generate anyway —
-calendar, mail, chat, GitHub — publishes it as a live page, and sends it to your
-manager as a `.xlsx` by email or as a message in Teams.
+calendar, mail, chat, GitHub — publishes it as a live page, and emails it to your
+manager as a `.xlsx`.
 
 Sign in with GitHub. Connect Microsoft. Say who gets the week. That's the whole setup.
 
@@ -142,25 +142,62 @@ connector gives one, a subject line used to label a block.
 Delete your account from **Settings** and the settings, the stored weeks and the
 Microsoft token go with it.
 
+## Delivery
+
+Set a recipient and a channel under **Settings**, then either press **Send** on
+the timesheet — which sends exactly the period on screen, this week or last month
+or any range you picked — or tick *Send my week automatically* and let the
+scheduled job do it. The two are separate on purpose: the switch governs what
+leaves unattended, and the button always works.
+
+Two things on **Connections** answer "will this actually send?" without involving
+your manager:
+
+- **Check the mail server** opens a connection, authenticates and hangs up. A
+  blocked port, a wrong password or an untrusted certificate fails here.
+- **Send a test to me** sends a real message, through the real mail server, to
+  *you* — same From, same Reply-To, same attachment, subject prefixed `[test]`.
+
+Mail goes over SMTP (`SMTP_HOST` and friends) or, where a host blocks outbound
+25/465/587, over **Mailgun's HTTP API** (`MAILGUN_API_KEY`, `MAILGUN_DOMAIN`, and
+`MAILGUN_BASE_URL=https://api.eu.mailgun.net` for an EU domain). Both build the
+same MIME message, so an attachment that works on one works on the other.
+
+Teams delivery exists but is **off** (`DELIVERY_CHAT_ENABLED`). The Microsoft
+connector's delegated permissions are read-only: without `ChatMessage.Send` in
+your tenant it fails with `FORBIDDEN: Missing scope` at the moment somebody
+presses Send, and an option nobody can use is worse than no option. Switch it on
+only if your tenant grants that scope.
+
 ## Scheduled refresh
 
 The web path builds a week from calendar and commits only, because a page view
-cannot afford the rest. Run this from cron or a Kubernetes CronJob to fill in the
-heavy signals — reviews, mail, chat — and to deliver:
+cannot afford the rest. The refresh job fills in the heavy signals — reviews,
+mail, chat — and stores the result, which is what the live page then serves while
+it is fresh (`LIVE_MAX_AGE_SECONDS`, default 15 minutes). Run it often; it sends
+nothing.
 
 ```bash
-python -m timesheet.run --send        # every account
-python -m timesheet.run --user alice  # one
-python -m timesheet.run --list        # who is registered
+python -m timesheet.run                # every account, no delivery
+python -m timesheet.run --send         # ...and deliver to each manager
+python -m timesheet.run --user alice   # one
+python -m timesheet.run --list         # who is registered
 ```
 
-One account's failure never stops the others.
+The chart ships this as two CronJobs — a `*/15` refresh and one daily `--send` —
+because `--send` on a quarter-hourly schedule is thirty emails a day to somebody
+who asked for one.
+
+One account's failure never stops the others, one failing *source* never costs a
+week (the others are still read, and what could not be read is said on the page),
+and a run in which everything failed never overwrites a good stored week with a
+blank one.
 
 ## Deploy
 
-`charts/timesheet` is a Helm chart: a web Deployment, a scheduled CronJob, and a
-PostgreSQL DSN you supply. `docker-bake.hcl` builds a multi-arch image. See
-[`.env.example`](.env.example) for every setting, and
+`charts/timesheet` is a Helm chart: a web Deployment, two CronJobs (refresh and
+deliver), and a PostgreSQL DSN you supply. `docker-bake.hcl` builds a multi-arch
+image. See [`.env.example`](.env.example) for every setting, and
 [`docs/`](docs/) for the HTTP API and the pushed-ingest path.
 
 ## Security

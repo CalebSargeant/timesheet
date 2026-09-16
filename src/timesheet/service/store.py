@@ -75,8 +75,32 @@ def _safe(user_id: str) -> str:
     GitHub host). Anything outside this set — a slash, a dot-dot — would let one
     account's file path escape into another's, so it is replaced rather than
     trusted.
+
+    Dots are kept, because a host has them, which means the character filter
+    alone still passed `..` through intact — and the week directory is a segment
+    of its own, so `weeks/../` was the store's root. A name made of nothing but
+    dots is therefore rewritten as well.
     """
-    return "".join(c if c.isalnum() or c in "-_." else "_" for c in user_id)[:120] or "anon"
+    out = "".join(c if c.isalnum() or c in "-_." else "_" for c in user_id)[:120]
+    if not out.strip("."):
+        out = "_" * len(out)
+    return out or "anon"
+
+
+def _inside(root: Path, path: Path) -> Path:
+    """`path`, having checked it stays under `root`. `_safe` should make this
+    unreachable; this is what keeps it true if `_safe` is ever loosened.
+
+    String normalisation rather than `Path.resolve()`: resolving touches the
+    filesystem to follow links, which makes the check itself an access with the
+    untrusted path in it — and `normpath` plus a prefix test is both sufficient
+    for a traversal check and the form a scanner can verify.
+    """
+    base = os.path.normpath(os.path.abspath(root))
+    full = os.path.normpath(os.path.abspath(path))
+    if not full.startswith(base + os.sep):
+        raise ValueError("refusing a store path outside the data directory")
+    return Path(full)
 
 
 class FileStore:
@@ -91,7 +115,7 @@ class FileStore:
     # --- users ---
 
     def _user_path(self, user_id: str) -> Path:
-        return self.dir / "users" / f"{_safe(user_id)}.json"
+        return _inside(self.dir, self.dir / "users" / f"{_safe(user_id)}.json")
 
     def save_user(self, user: User) -> User:
         p = self._user_path(user.id)
@@ -125,13 +149,13 @@ class FileStore:
     def delete_user(self, user_id: str) -> None:
         self._user_path(user_id).unlink(missing_ok=True)
         self._cred_path(user_id).unlink(missing_ok=True)
-        for p in (self.dir / "weeks" / _safe(user_id)).glob("*.json"):
+        for p in self._weeks_dir(user_id).glob("*.json"):
             p.unlink(missing_ok=True)
 
     # --- credentials ---
 
     def _cred_path(self, user_id: str) -> Path:
-        return self.dir / "creds" / f"{_safe(user_id)}.json"
+        return _inside(self.dir, self.dir / "creds" / f"{_safe(user_id)}.json")
 
     def _creds(self, user_id: str) -> dict:
         p = self._cred_path(user_id)
@@ -170,8 +194,11 @@ class FileStore:
 
     # --- weeks ---
 
+    def _weeks_dir(self, user_id: str) -> Path:
+        return _inside(self.dir, self.dir / "weeks" / _safe(user_id))
+
     def _path(self, user_id: str, monday: date) -> Path:
-        return self.dir / "weeks" / _safe(user_id) / f"week-{monday.isoformat()}.json"
+        return self._weeks_dir(user_id) / f"week-{monday.isoformat()}.json"
 
     def save(self, user_id: str, week_start: date, payload: dict, days: list[Day],
              full: bool = False) -> dict:
@@ -182,7 +209,7 @@ class FileStore:
             {"meta": meta, "days": [d.to_dict() for d in days], "ingest": (payload or {})}))
         return meta
 
-    def _meta_of(self, user_id: str, monday: date) -> dict | None:
+    def meta_of(self, user_id: str, monday: date) -> dict | None:
         p = self._path(user_id, monday)
         return json.loads(p.read_text()).get("meta") if p.exists() else None
 
@@ -196,12 +223,12 @@ class FileStore:
         return [Day.from_dict(x) for x in doc["days"]]
 
     def is_full(self, user_id: str, monday: date) -> bool:
-        m = self._meta_of(user_id, monday)
+        m = self.meta_of(user_id, monday)
         return _is_current(m) and bool(m.get("full"))
 
     def latest_meta(self, user_id: str) -> dict:
         metas = []
-        for p in (self.dir / "weeks" / _safe(user_id)).glob("week-*.json"):
+        for p in self._weeks_dir(user_id).glob("week-*.json"):
             try:
                 metas.append(json.loads(p.read_text())["meta"])
             except (OSError, ValueError, KeyError):
@@ -386,14 +413,15 @@ class PgStore:
             return None
         return [Day.from_dict(x) for x in raw]
 
-    def is_full(self, user_id: str, monday: date) -> bool:
+    def meta_of(self, user_id: str, monday: date) -> dict | None:
         with self._conn() as c:
             row = c.execute(
                 "SELECT meta FROM timesheet_week WHERE user_id=%s AND week_start=%s",
                 (user_id, monday)).fetchone()
-        if not row or row[0] is None:
-            return False
-        meta = self._json(row[0])
+        return self._json(row[0]) if row and row[0] is not None else None
+
+    def is_full(self, user_id: str, monday: date) -> bool:
+        meta = self.meta_of(user_id, monday)
         return _is_current(meta) and bool(meta.get("full"))
 
     def latest_meta(self, user_id: str) -> dict:

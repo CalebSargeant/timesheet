@@ -40,9 +40,23 @@ The live page. Signed out, this is the landing page instead — never a timeshee
 | `period` | `this-week` (default), `last-week`, `this-month`, `last-month` |
 | `from`, `to` | `YYYY-MM-DD`. Both together override `period`. |
 
-A week is assembled from stored weeks; one that is not cached yet is reconstructed
-live and stored. The **current** week is always rebuilt and never cached — today
-grows through the day, so a frozen snapshot would be wrong.
+A past week is assembled from stored weeks; one that is not cached yet is
+reconstructed live and stored.
+
+The **current** week is never frozen. While the scheduled refresh's copy is
+younger than `LIVE_MAX_AGE_SECONDS` (default 900) it is served as is — it carries
+the signals a page view cannot afford (mail, chat, reviews). Older than that and
+the page rebuilds it live from calendar and commits. If that rebuild reads
+nothing, the stored copy is shown with a line saying how old it is: a week that is
+an hour behind is a worse answer than a live one and a far better answer than a
+blank page.
+
+Anything that could not be read is printed above the table — a thin week says why
+it is thin, instead of looking like a week in which nobody worked.
+
+| Query | |
+| --- | --- |
+| `message`, `error` | What a redirect back from `POST /deliver` has to say. Rendered as a note, never as markup. |
 
 ### `GET /timesheet.xlsx`
 The selected period as a workbook, in the account's own language.
@@ -103,9 +117,37 @@ explicit allow-list with a type and a bound; one bad value is reported and the
 rest of the form is still saved.
 
 ### `POST /deliver`
-Sends this week now, over the configured channel. Form field: `csrf`. Redirects
-back to `/connections` with `message=` or `error=` describing what actually
-happened — it never claims a message went out that didn't.
+Sends **the period on screen**, once, over the configured channel.
+
+| Form field | |
+| --- | --- |
+| `csrf` | Required. |
+| `period` | `this-week` (default), `last-week`, `this-month`, `last-month` |
+| `from`, `to` | `YYYY-MM-DD`. Both together override `period`. |
+| `back` | `/` or `/connections` — where to land afterwards. Anything else is replaced with `/connections`, so this cannot become an open redirect. |
+
+The signed link in the message carries the same period, so the manager opens what
+the sender was looking at. Redirects back with `message=` or `error=` describing
+what actually happened — it never claims a message went out that didn't.
+
+This route ignores *Send my week automatically*: that switch governs the
+scheduled run, and a Send button that silently does nothing is its own kind of
+dishonest. A channel and a recipient are still required.
+
+### `POST /deliver/test`
+Sends a real message, through the real mail server, to the signed-in account —
+never to the manager. Same From, same Reply-To, same attachment as the real
+thing, subject prefixed `[test]`.
+
+| Form field | |
+| --- | --- |
+| `csrf` | Required. |
+| `to` | Where to send it. Defaults to the account's own email address. |
+
+### `POST /deliver/check`
+Opens a connection to the mail server, authenticates, and hangs up without
+sending anything. Answers the "is this thing plugged in" half of the question
+when the only other recipient available is a real manager. Form field: `csrf`.
 
 ### `POST /account/delete`
 Removes the account, its stored weeks and its Microsoft token. Form fields:
@@ -158,7 +200,7 @@ credited, so pushing in a reply you typed during a call adds nothing.
   "total_hm": "40:00",
   "total_minutes": 2400,
   "days": 5,
-  "logic_version": 12,
+  "logic_version": 13,
   "full": false,
   "generated_at": "2026-07-24T18:30:00+02:00"
 }
@@ -174,7 +216,36 @@ credited, so pushing in a reply you typed during a call adds nothing.
 ## Operational
 
 ### `GET /status`
-The signed-in account's last refresh. Requires a session.
+The signed-in account's last refresh, and whether the current week is keeping up.
+Requires a session. Reads the store only — the question "is the refresh job
+running?" must be answerable without doing the refresh job's work in the request.
+
+```json
+{
+  "ok": true,
+  "account": "alice",
+  "this_week": {
+    "week_start": "2026-09-14",
+    "stored_at": "2026-09-16T09:35:02+02:00",
+    "age_seconds": 240,
+    "full": true,
+    "total_hm": "23:12",
+    "fresh": true,
+    "max_age_seconds": 900
+  },
+  "week_start": "2026-09-14",
+  "total_hm": "23:12",
+  "generated_at": "2026-09-16T09:35:02+02:00",
+  "logic_version": 13,
+  "full": true,
+  "days": 3,
+  "total_minutes": 1392
+}
+```
+
+`fresh: false` means a page view rebuilds the week live instead of serving this
+copy. That is the intended fallback, not a fault — but if it is false for long, the
+refresh CronJob is not running.
 
 ### `GET /healthz`
 `{"ok": true}` whenever the process is alive, with no database call. A database

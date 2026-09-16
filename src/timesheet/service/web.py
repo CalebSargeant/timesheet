@@ -31,6 +31,24 @@ def account_chrome(user: User | None, csrf: str = "") -> str:
             f'<button class="btn" type="submit">Sign out</button></form>')
 
 
+def send_form(query: str, *, csrf: str, target: str = "") -> str:
+    """The Send control on the timesheet page.
+
+    It carries the period the page is showing as hidden fields, so what leaves is
+    what the sender can see. `back` brings them back to the same view with the
+    outcome on it rather than dropping them on a settings page.
+    """
+    hidden = "".join(
+        f'<input type="hidden" name="{esc(k)}" value="{esc(v)}">'
+        for k, v in (pair.split("=", 1) for pair in query.split("&") if "=" in pair))
+    who = f" to {target}" if target else ""
+    return (f'<form method="post" action="/deliver" style="display:inline">'
+            f'<input type="hidden" name="csrf" value="{esc(csrf)}">'
+            f'<input type="hidden" name="back" value="/">{hidden}'
+            f'<button class="btn" type="submit" '
+            f'title="Send what is on screen{esc(who)}">✉ Send</button></form>')
+
+
 def nav(active: str) -> str:
     links = "".join(
         f'<a class="{"pill active" if href == active else "pill"}" href="{esc(href)}">'
@@ -88,7 +106,8 @@ def _dot(ok: bool) -> str:
 
 def connections(user: User, *, csrf: str, github_account: str, microsoft: dict | None,
                 can_store: bool, delivery_line: str, message: str = "",
-                error: str = "", delivery_blocked: str = "") -> str:
+                error: str = "", delivery_blocked: str = "", mail_server: str = "",
+                test_to: str = "") -> str:
     ms_ok = bool(microsoft)
     ms_line = (f"Connected as {microsoft.get('account') or 'your Microsoft account'}"
                if ms_ok else "Not connected")
@@ -129,13 +148,30 @@ def connections(user: User, *, csrf: str, github_account: str, microsoft: dict |
           # healthy; the failure would otherwise only surface on the button.
           + (note(f"This will not send: {delivery_blocked}.", "bad")
              if delivery_blocked else "")
-          + '<p class="hint">Change this under Settings. Nothing is ever sent until you '
-          "switch it on.</p>"
+          + f'<p class="hint">Mail server: {esc(mail_server)}. Change the recipient and '
+          "the channel under Settings. Nothing leaves here on a schedule until you tick "
+          "<em>Send my week automatically</em>; the buttons below send once, when you "
+          "press them.</p>"
           '<div class="actions">'
           f'<form method="post" action="/deliver">'
           f'<input type="hidden" name="csrf" value="{esc(csrf)}">'
+          f'<input type="hidden" name="period" value="this-week">'
           f'<button class="btn" type="submit">Send this week now</button></form>'
-          "</div>")
+          f'<form method="post" action="/deliver/check">'
+          f'<input type="hidden" name="csrf" value="{esc(csrf)}">'
+          f'<button class="btn" type="submit">Check the mail server</button></form>'
+          "</div>"
+          # A test goes to the account holder, never to the manager: the point is
+          # to find out whether delivery works without anyone else finding out
+          # that you were unsure.
+          "<h3 style='margin:22px 0 6px'>Test the send</h3>"
+          '<p class="hint">Sends a real message through the real mail server to you, '
+          "with this week's sheet attached. Your manager never sees it.</p>"
+          f'<form method="post" action="/deliver/test" class="actions">'
+          f'<input type="hidden" name="csrf" value="{esc(csrf)}">'
+          f'<input type="email" name="to" value="{esc(test_to)}" '
+          'placeholder="your own address" style="max-width:260px">'
+          '<button class="btn" type="submit">Send a test to me</button></form>')
     return shell("Connections", user, "/connections", body, csrf=csrf,
                  subtitle="What this account is linked to", lang=user.locale, narrow=True)
 
@@ -166,8 +202,15 @@ def device_code(user: User, *, csrf: str, user_code: str, verification_uri: str,
                  subtitle="One code, once", lang=user.locale, narrow=True)
 
 
-def _field(name: str, label: str, value, hint: str = "") -> str:
-    """One labelled control, wrapped so a `.row` lays out fields and not fragments."""
+def _field(name: str, label: str, value, hint: str = "",
+           choices: tuple[str, ...] | None = None) -> str:
+    """One labelled control, wrapped so a `.row` lays out fields and not fragments.
+
+    `choices` narrows a choice field to what this deployment actually offers. The
+    stored value is always included even when it is no longer on offer, so a
+    setting somebody saved before a channel was switched off is shown to them
+    instead of silently reading as something they never chose.
+    """
     spec = SETTINGS_BY_NAME[name]
     fid = f"f-{name}"
     h = f'<div class="hint">{esc(hint)}</div>' if hint else ""
@@ -179,7 +222,9 @@ def _field(name: str, label: str, value, hint: str = "") -> str:
                 f'<label for="{fid}">{esc(label)}</label></div>{h}')
 
     if spec.kind in ("locale", "choice"):
-        options = i18n.choices() if spec.kind == "locale" else [(c, c) for c in spec.choices]
+        allowed = spec.choices if choices is None else tuple(
+            dict.fromkeys([*choices, *([value] if value in spec.choices else [])]))
+        options = i18n.choices() if spec.kind == "locale" else [(c, c) for c in allowed]
         opts = "".join(
             f'<option value="{esc(code)}"{" selected" if code == value else ""}>'
             f"{esc(display)}</option>"
@@ -197,9 +242,13 @@ def _field(name: str, label: str, value, hint: str = "") -> str:
     return f'<div class="f"><label for="{fid}">{esc(label)}</label>{control}{h}</div>'
 
 
-def settings(user: User, *, csrf: str, message: str = "", errors: list[str] | None = None) -> str:
+def settings(user: User, *, csrf: str, message: str = "", errors: list[str] | None = None,
+             channels: tuple[str, ...] | None = None) -> str:
     s = user.settings
     problems = "".join(note(e, "bad") for e in (errors or []))
+    chat_hint = ("" if channels is None or "chat" in channels else
+                 "Teams delivery is switched off on this deployment — the connector is "
+                 "read-only, so it cannot send a message on your behalf.")
     body = (
         note(message, "good") + problems
         + '<form method="post" action="/settings">'
@@ -252,11 +301,12 @@ def settings(user: User, *, csrf: str, message: str = "", errors: list[str] | No
         + "</div><div class='row'>"
         + _field("manager_chat", "Manager's Teams address", s.get("manager_chat"),
                  "Leave blank to use the email address above.")
-        + _field("delivery_channel", "Channel", s.get("delivery_channel"))
+        + _field("delivery_channel", "Channel", s.get("delivery_channel"),
+                 chat_hint, choices=channels)
         + "</div>"
         + _field("delivery_enabled", "Send my week automatically",
                  s.get("delivery_enabled"),
-                 "Nothing leaves this service until you tick this.")
+                 "On a schedule. You can always send by hand from the timesheet.")
 
         + '<div class="actions"><button class="btn primary" type="submit">Save</button>'
           '<a class="btn" href="/connections">Connections</a></div>'

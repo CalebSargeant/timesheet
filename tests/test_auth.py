@@ -65,6 +65,27 @@ def test_state_carries_only_a_local_path():
     assert auth.read_state(auth.make_state("//evil.example/steal")) == "/"
 
 
+@pytest.mark.parametrize("sneaky", [
+    "/\\evil.example/steal",       # a browser reads the backslash as a slash
+    "/\\/evil.example",
+    "/ok\r\nLocation: https://evil.example",
+    "\t/evil.example",
+])
+def test_state_refuses_the_paths_that_only_look_local(sneaky):
+    """A leading-`//` check alone let `/\\evil.example` through, and
+    `/auth/login?next=` made it a sign-in link that ended on another site."""
+    assert auth.read_state(auth.make_state(sneaky)) == "/"
+
+
+def test_the_redirect_sink_itself_refuses_to_leave_the_host():
+    """Checked again where every redirect is issued, so a future caller that
+    forgets cannot reopen it."""
+    from timesheet.service import main
+    for target in ("https://evil.example/", "//evil.example", "/\\evil.example"):
+        assert main._redirect(target).headers["location"] == "/"
+    assert main._redirect("/connections?error=x").headers["location"] == "/connections?error=x"
+
+
 def test_an_unsigned_state_is_refused():
     assert auth.read_state("not-a-real-state") is None
 

@@ -35,9 +35,10 @@ def app(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "_today", lambda _cfg: date(2026, 7, 22))
     monkeypatch.setattr(main, "_current_monday", lambda _cfg: date(2026, 7, 20))
     # No live pulls: the week comes from the captured fixture.
-    monkeypatch.setattr(main, "collect_week",
+    from timesheet.pipeline import WeekBuild
+    monkeypatch.setattr(main, "collect",
                         lambda monday, cfg, sources=None, llm=None, full=False:
-                        main.__dict__["_fixture_days"](cfg))
+                        WeekBuild(days=main.__dict__["_fixture_days"](cfg)))
 
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -353,6 +354,98 @@ def test_send_now_reports_what_actually_happened(app, client, monkeypatch):
                     follow_redirects=False)
     assert "error=" in r.headers["location"]
     assert "mail+server+said+no" in r.headers["location"].replace("%20", "+")
+
+
+def test_send_delivers_the_period_on_screen_not_always_this_week(app, client, monkeypatch):
+    """What is displayed is what gets sent. The button used to post nothing at
+    all, so looking at last month and pressing Send mailed this week."""
+    user = sign_in(app, client, delivery_channel="email", delivery_enabled=True,
+                   manager_email="boss@example.invalid")
+    from timesheet.service import auth, delivery
+    sent = {}
+
+    def _capture(u, days, meta, **kw):
+        sent.update(meta=meta, period=kw.get("period"), manual=kw.get("manual"))
+        return delivery.Delivery("email", True, target="boss@example.invalid")
+
+    monkeypatch.setattr(delivery, "send", _capture)
+    r = client.post("/deliver", data={"csrf": auth.csrf_token(user.id),
+                                      "from": "2026-07-20", "to": "2026-07-22",
+                                      "back": "/"},
+                    follow_redirects=False)
+    assert sent["period"] == "from=2026-07-20&to=2026-07-22"
+    assert sent["meta"]["week_start"] == "2026-07-20 to 2026-07-22"
+    assert sent["manual"] is True
+    # ...and it comes back to the same view, with the outcome on it.
+    assert r.headers["location"].startswith("/?from=2026-07-20&to=2026-07-22&message=")
+
+
+def test_the_send_button_only_shows_once_a_recipient_exists(app, client):
+    sign_in(app, client)
+    assert "/deliver" not in client.get("/").text
+    sign_in(app, client, delivery_channel="email", manager_email="boss@example.invalid")
+    assert "/deliver" in client.get("/").text
+
+
+def test_a_manual_send_works_with_the_automatic_switch_off(app, client, monkeypatch):
+    """The switch governs what leaves here unattended. A Send button that
+    silently does nothing is its own kind of dishonest."""
+    user = sign_in(app, client, delivery_channel="email", delivery_enabled=False,
+                   manager_email="boss@example.invalid")
+    from timesheet.service import auth, delivery
+    monkeypatch.setattr(delivery, "send", lambda *a, **k: delivery.Delivery(
+        "email", True, target="boss@example.invalid"))
+    r = client.post("/deliver", data={"csrf": auth.csrf_token(user.id)},
+                    follow_redirects=False)
+    assert "message=" in r.headers["location"]
+
+
+def test_a_send_cannot_be_redirected_off_the_service(app, client, monkeypatch):
+    user = sign_in(app, client, delivery_channel="email", delivery_enabled=True,
+                   manager_email="boss@example.invalid")
+    from timesheet.service import auth, delivery
+    monkeypatch.setattr(delivery, "send", lambda *a, **k: delivery.Delivery(
+        "email", True, target="boss@example.invalid"))
+    r = client.post("/deliver", data={"csrf": auth.csrf_token(user.id),
+                                      "back": "https://evil.example/"},
+                    follow_redirects=False)
+    assert r.headers["location"].startswith("/connections?")
+
+
+def test_a_test_send_goes_to_the_account_holder_and_nobody_else(app, client, monkeypatch):
+    user = sign_in(app, client, delivery_channel="email", delivery_enabled=True,
+                   manager_email="boss@example.invalid")
+    user.email = "alice@example.invalid"
+    app._store.save_user(user)
+    from timesheet.service import auth, delivery
+    seen = {}
+
+    def _test_send(u, *, to="", **kw):
+        seen["to"] = to or u.email
+        return delivery.Delivery("email", True, target=seen["to"])
+
+    monkeypatch.setattr(delivery, "send_test", _test_send)
+    client.post("/deliver/test", data={"csrf": auth.csrf_token(user.id)},
+                follow_redirects=False)
+    assert seen["to"] == "alice@example.invalid"
+
+
+def test_checking_the_mail_server_sends_nothing(app, client, monkeypatch):
+    user = sign_in(app, client)
+    from timesheet.service import auth, delivery
+    monkeypatch.setattr(delivery, "check_email", lambda **k: "")
+    monkeypatch.setattr(delivery, "send", lambda *a, **k: pytest.fail("a check must not send"))
+    r = client.post("/deliver/check", data={"csrf": auth.csrf_token(user.id)},
+                    follow_redirects=False)
+    assert "message=" in r.headers["location"]
+
+
+def test_teams_is_not_offered_as_a_channel_unless_the_deployment_allows_it(app, client):
+    sign_in(app, client)
+    page = client.get("/settings").text
+    assert 'value="email"' in page
+    assert 'value="chat"' not in page
+    assert "switched off on this deployment" in page
 
 
 # --- housekeeping ----------------------------------------------------------

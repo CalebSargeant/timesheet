@@ -50,11 +50,17 @@ config:
   dayRolloverHour: 5
   rotaEnabled: false
   rotaMinutes: 75
-  includeAfterHours: false
   includeEmail: true
+  # Teams messages you SENT, as a signal for the reconstruction. Nothing to do
+  # with delivery (see `delivery.chat` below) — this one only reads.
   includeChat: true
   backfillWeeks: 6
   downloadTtlSeconds: 604800
+
+  # How long the refresh job's copy of the in-progress week is served before a
+  # page view rebuilds it live. Keep it near `cronjob.schedule`: that is the
+  # staleness bound on "this week".
+  liveMaxAgeSeconds: 900
 
   # Must be writable: Entra rotates the refresh token on every use, and a
   # read-only path silently replays a spent one until it dies.
@@ -67,13 +73,27 @@ config:
     model: ""
     reasoningEffort: "low"
 
-  # SMTP belongs to the deployment: an account holder gives a recipient, never a
-  # mail server's credentials. The password goes in the Secret.
+  # Delivery: how a finished week reaches a manager.
+  delivery:
+    # Teams. Off, and it should stay off unless your tenant grants the Microsoft
+    # connector ChatMessage.Send: its delegated permissions are read-only, so on
+    # every other tenant this is an option nobody can use, failing with
+    # "FORBIDDEN: Missing scope" at the moment somebody presses Send.
+    chat: false
+
+  # Mail belongs to the deployment: an account holder gives a recipient, never a
+  # mail server's credentials. Secrets (SMTP_PASSWORD, MAILGUN_API_KEY) go in the
+  # Secret. Set EITHER the SMTP block or the Mailgun one — Mailgun's API wins if
+  # both are set, because configuring it is a deliberate move away from SMTP.
   email:
+    from: ""
     smtpHost: ""
     smtpPort: 587
     smtpStartTls: true
-    from: ""
+    # Mailgun's HTTP API, for clusters where outbound SMTP is blocked. An EU
+    # domain answers on https://api.eu.mailgun.net and nowhere else.
+    mailgunDomain: ""
+    mailgunBaseUrl: ""
 
 # Secret env. Point `existingSecretName` at whatever already projects secrets into
 # this namespace (External Secrets, Sealed Secrets, the CSI driver, a hand-made
@@ -86,23 +106,42 @@ config:
 #   GITHUB_OAUTH_CLIENT_ID       the OAuth app                         (REQUIRED)
 #   GITHUB_OAUTH_CLIENT_SECRET                                         (REQUIRED)
 #   DATABASE_URL                 PostgreSQL DSN                        (REQUIRED)
-#   SMTP_PASSWORD                only if delivering by email
+#   SMTP_PASSWORD                only if delivering by email over SMTP
+#   MAILGUN_API_KEY              only if delivering by email over Mailgun's API
 #   LLM_API_KEY                  only if AI label polish is on
 secrets:
   create: false
   existingSecretName: ""
   data: {}
 
-# Scheduled refresh: the heavy signals (reviews, mail, chat) and delivery.
+# Two scheduled jobs, because they want opposite schedules.
+#
+# `cronjob` REFRESHES: it rebuilds each account's week with the heavy signals a
+# page view cannot afford (reviews, mail, chat) and stores it. It wants to run
+# often — that frequency is what makes the live page current — and it sends
+# nothing, so running it every quarter of an hour is free of consequences.
+#
+# `deliverJob` SENDS, once, at the end of the day. Keeping delivery out of the
+# frequent job is the whole point of the split: `--send` on a */15 schedule is
+# thirty-odd emails to a manager every day.
 cronjob:
   enabled: true
-  schedule: "30 18 * * 1-5"   # 18:30 Mon-Fri
+  schedule: "*/15 6-20 * * 1-5"   # every 15 min through the working day
   timeZone: UTC
-  send: true                  # pass --send, delivering to each account's manager
+  send: false                     # do not turn this on; use deliverJob
   concurrencyPolicy: Forbid
   backoffLimit: 2
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
+
+deliverJob:
+  enabled: true
+  schedule: "30 18 * * 1-5"       # 18:30 Mon-Fri
+  timeZone: ""                    # defaults to cronjob.timeZone
+  concurrencyPolicy: Forbid
+  backoffLimit: 2
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
 
 resources:
   requests: {cpu: 25m, memory: 96Mi}

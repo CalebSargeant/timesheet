@@ -10,7 +10,9 @@ Routes:
   POST /connect/microsoft/finish      the no-JavaScript version of the same
   POST /connect/microsoft/disconnect
   GET/POST /settings          the account's own reconstruction settings
-  POST /deliver               send this week to the configured manager, now
+  POST /deliver               send the period on screen to the configured manager
+  POST /deliver/test          send a test message to the signed-in account
+  POST /deliver/check         ask the mail server if it would take one
   POST /account/delete
   GET  /timesheet.xlsx        download the selected period
   GET  /d/{uid}/{token}/timesheet.xlsx    signed, time-limited (the emailed link)
@@ -25,8 +27,8 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-from datetime import date, datetime, timedelta
-from urllib.parse import quote
+from datetime import UTC, date, datetime, timedelta
+from urllib.parse import quote, urlparse
 from zoneinfo import ZoneInfo
 
 from fastapi import Cookie, FastAPI, Form, Header, HTTPException, Query, Request, Response
@@ -44,17 +46,29 @@ from ..periods import (
     parse_date,
     resolve_period,
 )
-from ..pipeline import Sources, build_from_ingest, collect_week
+from ..pipeline import Sources, WeekBuild, build_from_ingest, collect
 from ..reconstruct import logical_date
 from ..render import html as render_html
 from ..render import xlsx as render_xlsx
 from ..render.theme import esc
+from ..timeutil import hm
 from . import auth, crypto, delivery, mcp_connect, security, users, web
 from .store import GITHUB, MICROSOFT, make_store
 
 log = logging.getLogger(__name__)
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+# How long the scheduled refresh's copy of the in-progress week is served before
+# the page rebuilds it live. It is the page's staleness bound, so it wants to be
+# about the refresh interval: shorter and every view pays for a live rebuild that
+# the CronJob was about to do anyway; much longer and "this week" lags behind the
+# morning it is describing.
+LIVE_MAX_AGE = int(os.environ.get("LIVE_MAX_AGE_SECONDS", "900"))
+
+# Where a form may send somebody afterwards. An open redirect is one `next=`
+# parameter away in any service that takes one, so the set is closed.
+_BACK = ("/", "/connections")
 
 app = FastAPI(title="timesheet", docs_url=None, redoc_url=None)
 _env_cfg = Config.from_env()
@@ -146,41 +160,120 @@ def _current_monday(cfg: Config) -> date:
     return d - timedelta(days=d.weekday())
 
 
-def _week_days(user: users.User, cfg: Config, monday: date) -> list[Day]:
-    """Days for one week. Past weeks come from the store (reconstructed + cached on a
-    miss). The current (in-progress) week is always rebuilt live and never cached:
-    today grows through the day and future days must stay hidden, so a frozen
-    snapshot would be wrong."""
-    sources = _sources_for(user)
+def _age_seconds(stamp: str | None) -> float | None:
+    """How old a stored week is, or None if it carries no usable timestamp."""
+    if not stamp:
+        return None
+    try:
+        built = datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    if built.tzinfo is None:
+        built = built.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - built).total_seconds()
+
+
+def _collect(user: users.User, cfg: Config, monday: date, sources: Sources):
+    """A live build that never raises. The reasons come back as `problems`."""
+    try:
+        return collect(monday, cfg, sources)
+    # A collector can fail in as many ways as the network and a third party's
+    # schema allow; one bad week must not 500 the whole page.
+    except Exception as e:
+        log.warning("week %s failed for %s", monday, user.login, exc_info=True)
+        return WeekBuild(days=[], problems=(f"could not build this week: {str(e)[:200]}",))
+
+
+def _current_week(user: users.User, cfg: Config, monday: date,
+                  sources: Sources) -> tuple[list[Day], list[str]]:
+    """The in-progress week: as fresh as it can be, and never silently blank.
+
+    The scheduled refresh stores this week with the signals a page view cannot
+    afford — mail, chat, reviews — so while that copy is fresh it is both richer
+    and cheaper than anything this request could build, and it is served as is.
+    Once it ages past `LIVE_MAX_AGE` the page rebuilds live (calendar and commits)
+    rather than showing yesterday's hours.
+
+    If that rebuild comes back empty the stored copy is served instead, with a
+    line saying how old it is. An hour-old week is a worse answer than a live one
+    and a far better answer than a blank page, which is what an expired Microsoft
+    token used to produce — with nothing on the page to say so.
+    """
+    stored = _store.get_days(user.id, monday)
+    meta = _store.meta_of(user.id, monday) or {}
+    age = _age_seconds(meta.get("generated_at"))
+    if stored and meta.get("full") and age is not None and age <= LIVE_MAX_AGE:
+        return stored, []
+
+    build = _collect(user, cfg, monday, sources)
+    if build.days:
+        return build.days, list(build.problems)
+    if stored:
+        when = (meta.get("generated_at", "") or "")[:16].replace("T", " ")
+        return stored, [*build.problems,
+                        f"Nothing could be read just now — showing the copy stored at {when}."]
+    return [], list(build.problems)
+
+
+def _week_days(user: users.User, cfg: Config, monday: date,
+               sources: Sources | None = None) -> tuple[list[Day], list[str]]:
+    """Days for one week, and anything that could not be read while building them.
+
+    Past weeks come from the store (reconstructed + cached on a miss). The current
+    week is handled separately: it grows through the day, so it is either fresh or
+    rebuilt, never frozen.
+    """
+    sources = sources if sources is not None else _sources_for(user)
     if monday >= _current_monday(cfg):
-        try:
-            return collect_week(monday, cfg, sources)
-        except Exception:
-            log.warning("live week %s failed for %s", monday, user.login, exc_info=True)
-            return []
+        return _current_week(user, cfg, monday, sources)
     cached = _store.get_days(user.id, monday)
     if cached is not None:
-        return cached
-    try:
-        days = collect_week(monday, cfg, sources)
-    except Exception:
-        log.warning("week %s failed for %s", monday, user.login, exc_info=True)
-        return []
-    if days:
+        return cached, []
+    build = _collect(user, cfg, monday, sources)
+    if build.days:
         # Never cache an empty week. Reaching here with nothing usually means the
         # account has not connected anything yet, not that the week was empty —
         # and a cached blank would outlive the connection that fixes it.
-        _store.save(user.id, monday, {}, days)
-    return days
+        _store.save(user.id, monday, {}, build.days)
+    return build.days, list(build.problems)
 
 
-def _period_days(user: users.User, cfg: Config, period: Period) -> list[Day]:
+def _period_days(user: users.User, cfg: Config, period: Period) -> tuple[list[Day], list[str]]:
     out: list[Day] = []
+    notes: list[str] = []
+    # One set of credentials for the whole period: a month is five weeks, and
+    # decrypting the same two tokens five times is five times the work for the
+    # same answer.
+    sources = _sources_for(user)
     for monday in mondays_covering(period.start, period.end):
-        out.extend(_week_days(user, cfg, monday))
+        days, problems = _week_days(user, cfg, monday, sources)
+        out.extend(days)
+        notes.extend(n for n in problems if n not in notes)
     out = [d for d in out if period.start <= d.date.date() <= period.end]
     out.sort(key=lambda d: d.date)
-    return out
+    return out, notes
+
+
+def _period_query(period: Period) -> str:
+    """The query string that names this period on any route that takes one."""
+    if period.key == "custom":
+        return f"from={period.start.isoformat()}&to={period.end.isoformat()}"
+    return f"period={period.key}"
+
+
+def _period_meta(period: Period, days: list[Day], loc) -> dict:
+    """The meta a delivered message is written from.
+
+    `week_start` is a whole Monday-to-Sunday week's Monday where that is what is
+    being sent, and the plain date range otherwise — so a month lands in the
+    subject line as the month it is, not as "week This month".
+    """
+    total = sum(d.minutes for d in days)
+    whole_week = period.start.weekday() == 0 and (period.end - period.start).days == 6
+    label = (period.start.isoformat() if whole_week else
+             f"{period.start.isoformat()} {loc.period_to} {period.end.isoformat()}")
+    return {"week_start": label, "total_minutes": total, "total_hm": hm(total),
+            "days": len(days)}
 
 
 def _resolve(cfg: Config, period: str, frm: str | None, to: str | None) -> Period:
@@ -196,7 +289,19 @@ def _guard(user: users.User, csrf: str | None) -> None:
 
 
 def _redirect(path: str, *, status: int = 303) -> RedirectResponse:
-    return RedirectResponse(path, status_code=status)
+    """Every redirect this service issues goes through here, so it is where the
+    "never off-site" rule lives. Callers already pass local paths; this makes that
+    a property of the service rather than of each caller remembering to.
+
+    `auth.local_path` does the real work. The backslash strip and the scheme/host
+    test after it change nothing that function lets through — they are the shape
+    CodeQL's url-redirection query recognises as a check, and it cannot see inside
+    `local_path`. An alert nobody can clear is one everybody learns to ignore.
+    """
+    target = auth.local_path(path).replace("\\", "")
+    if not urlparse(target).netloc and not urlparse(target).scheme:
+        return RedirectResponse(target, status_code=status)
+    return RedirectResponse("/", status_code=status)
 
 
 # --- sign in ---------------------------------------------------------------
@@ -206,7 +311,9 @@ def _redirect(path: str, *, status: int = 303) -> RedirectResponse:
 def login(next: str = Query(default="/")):
     if not _provider.configured:
         raise HTTPException(status_code=503, detail="GitHub sign-in is not configured")
-    return _redirect(_provider.authorize_url(auth.make_state(next)), status=307)
+    # The one redirect that must leave this host, to GitHub's own authorize page.
+    # Built from deployment config, never from the request.
+    return RedirectResponse(_provider.authorize_url(auth.make_state(next)), status_code=307)
 
 
 @app.get("/auth/callback")
@@ -287,6 +394,7 @@ def _subtitle(period: Period, days: list[Day]) -> str:
 def index(period: str = Query(default="this-week"),
           frm: str | None = Query(default=None, alias="from"),
           to: str | None = Query(default=None),
+          message: str = Query(default=""), error: str = Query(default=""),
           ts_session: str | None = Cookie(default=None)):
     user = _current_user(ts_session)
     if user is None:
@@ -294,19 +402,26 @@ def index(period: str = Query(default="this-week"),
                                         configured=_provider.configured))
     cfg = _config_for(user)
     p = _resolve(cfg, period, frm, to)
-    days = _period_days(user, cfg, p)
-    dl = (f"timesheet.xlsx?from={p.start.isoformat()}&to={p.end.isoformat()}"
-          if p.key == "custom" else f"timesheet.xlsx?period={p.key}")
+    days, notes = _period_days(user, cfg, p)
+    query = _period_query(p)
     generated = (_store.latest_meta(user.id).get("generated_at", "") or "")[:16].replace("T", " ")
+    channel, target = delivery.target_for(user, manual=True)
     return HTMLResponse(render_html.build_week(
-        days, locale=cfg.strings, subtitle=_subtitle(p, days), download_url=dl,
+        days, locale=cfg.strings, subtitle=_subtitle(p, days),
+        download_url=f"timesheet.xlsx?{query}",
         nav_html=_nav_html(cfg, p.key if p.key in PERIOD_KEYS else "", p.start, p.end),
         generated=generated or None,
+        # What is on screen is what gets sent: the button carries the period the
+        # page is showing, so "send this" means this and not "send this week".
+        send_html=(web.send_form(query, csrf=auth.csrf_token(user.id), target=target)
+                   if channel != "none" else ""),
+        notes=[message[:300]] if message else [],
+        bad_notes=[*notes, *([error[:300]] if error else [])],
         account_html=web.account_chrome(user, auth.csrf_token(user.id))))
 
 
 def _period_xlsx(user: users.User, cfg: Config, period: Period) -> Response:
-    days = _period_days(user, cfg, period)
+    days, _ = _period_days(user, cfg, period)
     if not days:
         raise HTTPException(status_code=404, detail="no timesheet for this period")
     name = f"timesheet-{period.start.isoformat()}_{period.end.isoformat()}.xlsx"
@@ -343,10 +458,20 @@ def signed_download(uid: str, token: str, period: str = Query(default="this-week
 
 
 def _delivery_line(user: users.User) -> str:
-    channel, target = delivery.target_for(user)
+    """What this account does with its finished week, in one sentence.
+
+    Automatic and manual are said separately because they are different: a
+    recipient with the switch off means the Send button works and nothing leaves
+    here on its own, and reading that as "nothing is sent" sent people looking
+    for a broken scheduler.
+    """
+    channel, target = delivery.target_for(user, manual=True)
     if channel == "none":
-        return "Nothing is sent automatically"
-    return f"Sends by {channel} to {target or 'nobody — no recipient set'}"
+        return "No channel chosen — nothing is sent"
+    who = target or "nobody — no recipient set"
+    if not user.setting("delivery_enabled"):
+        return f"Sends by {channel} to {who} when you press Send (never on its own)"
+    return f"Sends by {channel} to {who}"
 
 
 @app.get("/connections", response_class=HTMLResponse)
@@ -356,12 +481,13 @@ def connections(ts_session: str | None = Cookie(default=None),
     meta = None
     with contextlib.suppress(crypto.CryptoUnavailable):
         meta = _store.credential_meta(user.id, MICROSOFT)
-    channel, _ = delivery.target_for(user)
+    channel, _ = delivery.target_for(user, manual=True)
     blocked = delivery.unavailable(channel, session=_sources_for(user).m365)
     return HTMLResponse(web.connections(
         user, csrf=auth.csrf_token(user.id), github_account=user.login, microsoft=meta,
         can_store=crypto.available(), delivery_line=_delivery_line(user),
-        message=message[:200], error=error[:200], delivery_blocked=blocked))
+        message=message[:300], error=error[:300], delivery_blocked=blocked,
+        mail_server=delivery.mail_server_line(), test_to=user.email))
 
 
 @app.post("/connect/microsoft", response_class=HTMLResponse)
@@ -423,7 +549,8 @@ def settings_page(ts_session: str | None = Cookie(default=None),
                   message: str = Query(default="")):
     user = _require(ts_session)
     return HTMLResponse(web.settings(user, csrf=auth.csrf_token(user.id),
-                                     message=message[:200]))
+                                     message=message[:200],
+                                     channels=delivery.channels()))
 
 
 @app.post("/settings", response_class=HTMLResponse)
@@ -444,7 +571,8 @@ async def save_settings(request: Request, ts_session: str | None = Cookie(defaul
     _store.save_user(user)
     if errors:
         return HTMLResponse(web.settings(user, csrf=auth.csrf_token(user.id),
-                                         message="Saved, apart from:", errors=errors),
+                                         message="Saved, apart from:", errors=errors,
+                                         channels=delivery.channels()),
                             status_code=400)
     return _redirect("/settings?message=Saved")
 
@@ -465,25 +593,75 @@ def delete_account(csrf: str = Form(default=""), confirm: str = Form(default="")
 # --- delivery --------------------------------------------------------------
 
 
+def _back_url(back: str, query: str, key: str, text: str) -> str:
+    """Where a send returns to, carrying its own outcome. Never anywhere else."""
+    where = back if back in _BACK else "/connections"
+    params = f"{query}&" if (query and where == "/") else ""
+    return f"{where}?{params}{key}={quote(text, safe='')}"
+
+
 @app.post("/deliver")
-def deliver_now(csrf: str = Form(default=""), ts_session: str | None = Cookie(default=None)):
+def deliver_now(csrf: str = Form(default=""), period: str = Form(default="this-week"),
+                frm: str | None = Form(default=None, alias="from"),
+                to: str | None = Form(default=None), back: str = Form(default="/connections"),
+                ts_session: str | None = Cookie(default=None)):
+    """Send what the sender is looking at, once, because they asked.
+
+    The period comes from the form, so this sends the range on screen — a past
+    week, a month, a custom span — rather than always this week, which was the
+    only thing it could ever send.
+    """
     user = _require(ts_session)
     _guard(user, csrf)
     cfg = _config_for(user)
-    monday = _current_monday(cfg)
-    days = _week_days(user, cfg, monday)
+    p = _resolve(cfg, period, frm, to)
+    days, _ = _period_days(user, cfg, p)
+    query = _period_query(p)
     if not days:
-        return _redirect("/connections?error=Nothing+to+send+for+this+week+yet")
-    meta = _store.save(user.id, monday, {}, days)
+        return _redirect(_back_url(back, query, "error",
+                                   f"Nothing to send for {p.label.lower()} yet"))
+    meta = _period_meta(p, days, cfg.strings)
     result = delivery.send(user, days, meta, session=_sources_for(user).m365,
-                           public_url=_public_url)
-    key = "message" if result.sent else "error"
+                           public_url=_public_url, manual=True, period=query)
     # quote(), not esc(): this lands in a QUERY STRING. HTML-escaping turns the
     # quotes in a connector's JSON error into &quot;, and the & then starts a new
     # parameter — every error was being cut off at its first quote, which is how
     # `FORBIDDEN: Missing scope ChatMessage.Send` reached the page as
     # "teams_create_chat: {".
-    return _redirect(f"/connections?{key}={quote(result.describe(), safe='')}")
+    key = "message" if result.sent else "error"
+    return _redirect(_back_url(back, query, key, result.describe()))
+
+
+@app.post("/deliver/test")
+def deliver_test(csrf: str = Form(default=""), to: str = Form(default=""),
+                 ts_session: str | None = Cookie(default=None)):
+    """Prove the mail path works — to the account holder, and to nobody else.
+
+    A manager should never receive a test, so this one never asks where to send:
+    it goes to the signed-in person's own address.
+    """
+    user = _require(ts_session)
+    _guard(user, csrf)
+    cfg = _config_for(user)
+    days, _ = _period_days(user, cfg, _resolve(cfg, "this-week", None, None))
+    xlsx = render_xlsx.build_week(days, locale=cfg.strings) if days else b""
+    result = delivery.send_test(user, to=to.strip(), public_url=_public_url, xlsx=xlsx)
+    key = "message" if result.sent else "error"
+    text = (f"test message sent to {result.target} — check that it arrives"
+            if result.sent else result.describe())
+    return _redirect(f"/connections?{key}={quote(text, safe='')}")
+
+
+@app.post("/deliver/check")
+def deliver_check(csrf: str = Form(default=""),
+                  ts_session: str | None = Cookie(default=None)):
+    """Ask the mail server whether it would take a message, without sending one."""
+    user = _require(ts_session)
+    _guard(user, csrf)
+    why = delivery.check_email()
+    key = "error" if why else "message"
+    text = why or "the mail server accepted the connection and the credentials"
+    return _redirect(f"/connections?{key}={quote(text, safe='')}")
 
 
 # --- pushed ingest ---------------------------------------------------------
@@ -518,8 +696,28 @@ async def ingest(request: Request,
 
 @app.get("/status")
 def status(ts_session: str | None = Cookie(default=None)):
+    """This account's last refresh, and whether the current week is keeping up.
+
+    Reads the store and nothing else: the question "is the refresh job running?"
+    must be answerable without doing the refresh job's work in the request.
+    """
     user = _require(ts_session)
-    return {"ok": True, "account": user.login, **_store.latest_meta(user.id)}
+    monday = _current_monday(_config_for(user))
+    meta = _store.meta_of(user.id, monday) or {}
+    age = _age_seconds(meta.get("generated_at"))
+    return {"ok": True, "account": user.login,
+            "this_week": {
+                "week_start": monday.isoformat(),
+                "stored_at": meta.get("generated_at"),
+                "age_seconds": int(age) if age is not None else None,
+                "full": bool(meta.get("full")),
+                "total_hm": meta.get("total_hm"),
+                # False means a page view rebuilds it live rather than serving
+                # this copy — which is the intended fallback, not a fault.
+                "fresh": bool(meta.get("full") and age is not None and age <= LIVE_MAX_AGE),
+                "max_age_seconds": LIVE_MAX_AGE,
+            },
+            **_store.latest_meta(user.id)}
 
 
 @app.get("/healthz")

@@ -415,8 +415,8 @@ def index(period: str = Query(default="this-week"),
         # page is showing, so "send this" means this and not "send this week".
         send_html=(web.send_form(query, csrf=auth.csrf_token(user.id), target=target)
                    if channel != "none" else ""),
-        notes=[message[:300]] if message else [],
-        bad_notes=[*notes, *([error[:300]] if error else [])],
+        notes=[message[:500]] if message else [],
+        bad_notes=[*notes, *([error[:500]] if error else [])],
         account_html=web.account_chrome(user, auth.csrf_token(user.id))))
 
 
@@ -486,7 +486,7 @@ def connections(ts_session: str | None = Cookie(default=None),
     return HTMLResponse(web.connections(
         user, csrf=auth.csrf_token(user.id), github_account=user.login, microsoft=meta,
         can_store=crypto.available(), delivery_line=_delivery_line(user),
-        message=message[:300], error=error[:300], delivery_blocked=blocked,
+        message=message[:500], error=error[:500], delivery_blocked=blocked,
         mail_server=delivery.mail_server_line(), test_to=user.email))
 
 

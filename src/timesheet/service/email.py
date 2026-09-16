@@ -137,12 +137,11 @@ class MailgunMailer:
     def describe(self) -> str:
         return f"Mailgun {self.domain} via {self.base_url} as {self.sender}"
 
-    @property
-    def _url(self) -> str:
-        return f"{self.base_url.rstrip('/')}/v3/{urllib.parse.quote(self.domain)}/messages.mime"
+    def _endpoint(self, name: str) -> str:
+        return f"{self.base_url.rstrip('/')}/v3/{urllib.parse.quote(self.domain)}/{name}"
 
-    def _post(self, fields: list[tuple[str, str]],
-              files: list[tuple[str, str, bytes]]) -> str:
+    def _post(self, url: str, fields: list[tuple[str, str]],
+              files: list[tuple[str, str, bytes]] = ()) -> str:
         """One multipart POST. Returns Mailgun's reply, raises MailError otherwise."""
         boundary = f"----timesheet{uuid.uuid4().hex}"
         parts: list[bytes] = []
@@ -160,7 +159,7 @@ class MailgunMailer:
 
         token = base64.b64encode(f"api:{self.api_key}".encode()).decode()
         try:
-            with open_url(self._url, data=b"".join(parts), timeout=self.timeout, headers={
+            with open_url(url, data=b"".join(parts), timeout=self.timeout, headers={
                 "Authorization": f"Basic {token}",
                 "Content-Type": f"multipart/form-data; boundary={boundary}",
             }) as r:
@@ -169,38 +168,36 @@ class MailgunMailer:
             # Mailgun puts the reason in the body — an unverified domain, a
             # sandbox recipient that was never authorised, a key for the wrong
             # region. Dropping it leaves only "HTTP 401", which explains nothing.
-            detail = e.read().decode(errors="replace")[:300] if e.fp else ""
-            raise MailError(f"Mailgun refused the message (HTTP {e.code}): {detail}") from e
+            detail = e.read().decode(errors="replace")[:200] if e.fp else ""
+            raise MailError(f"Mailgun refused the message (HTTP {e.code}): {detail}"
+                            f"{_region_hint(e.code)}") from e
         except urllib.error.URLError as e:
             raise MailError(f"cannot reach {self.base_url}: {e.reason}") from e
         except InsecureUrl as e:
             raise MailError(str(e)) from e
 
     def check(self) -> None:
-        """Ask Mailgun whether the key opens this domain, without sending.
+        """Have Mailgun accept a message in test mode: validated, never delivered.
 
-        A 200 here means the credentials and the region are right, which is the
-        half of a Mailgun setup that is usually wrong: a key from the US region
-        pointed at `api.eu.mailgun.net` fails exactly like a bad key.
+        A send is the only request a domain *sending* key may make — Mailgun
+        scopes those keys to POST /messages and /messages.mime, which is what
+        makes them the right key for this service. Asking the domains API
+        instead, as this first did, reported a perfectly good sending key as
+        rejected. `o:testmode` makes the request real in every respect but
+        delivery: the key, the domain and the region are all checked. Mailgun
+        bills it like any other message, which for one press of a button is the
+        price of an answer that is true.
         """
         if not self.configured:
             raise MailError(f"Mailgun is not fully configured — {self.missing()}")
-        url = (f"{self.base_url.rstrip('/')}/v3/domains/"
-               f"{urllib.parse.quote(self.domain)}")
-        token = base64.b64encode(f"api:{self.api_key}".encode()).decode()
-        try:
-            with open_url(url, timeout=self.timeout,
-                          headers={"Authorization": f"Basic {token}"}) as r:
-                r.read(1)
-        except urllib.error.HTTPError as e:
-            hint = (" — check MAILGUN_BASE_URL: an EU domain answers on "
-                    "https://api.eu.mailgun.net" if e.code in (401, 404) else "")
-            raise MailError(f"Mailgun rejected the key for {self.domain} "
-                            f"(HTTP {e.code}){hint}") from e
-        except urllib.error.URLError as e:
-            raise MailError(f"cannot reach {self.base_url}: {e.reason}") from e
-        except InsecureUrl as e:
-            raise MailError(str(e)) from e
+        address = parseaddr(self.sender)[1] or self.sender
+        self._post(self._endpoint("messages"), [
+            ("from", self.sender),
+            ("to", address),
+            ("subject", "timesheet: mail server check"),
+            ("text", "Sent in Mailgun test mode: accepted, validated, never delivered."),
+            ("o:testmode", "yes"),
+        ])
 
     def send(self, message: EmailMessage) -> None:
         if not self.configured:
@@ -208,8 +205,21 @@ class MailgunMailer:
         recipients = [a for a in (message.get_all("To") or []) if a]
         if not recipients:
             raise MailError("no recipient on the message")
-        self._post([("to", ", ".join(recipients))],
+        self._post(self._endpoint("messages.mime"), [("to", ", ".join(recipients))],
                    [("message", "timesheet.eml", bytes(message))])
+
+
+def _region_hint(code: int) -> str:
+    """What a 401 or 404 from Mailgun most often means when the key is right.
+
+    Domains and keys are global but a domain's data lives in one region, so a
+    valid key sent to the other region's API fails exactly like a wrong key.
+    """
+    if code not in (401, 403, 404):
+        return ""
+    return (" — if the key and domain are right, check MAILGUN_BASE_URL: a domain "
+            "answers only in its own region (US https://api.mailgun.net, "
+            "EU https://api.eu.mailgun.net)")
 
 
 def from_env(env: dict | None = None) -> Mailer | MailgunMailer:

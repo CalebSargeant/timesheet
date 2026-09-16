@@ -407,3 +407,51 @@ def test_mailgun_refusing_a_message_carries_its_own_explanation(monkeypatch):
                  manager_email="boss@example.invalid")
     out = delivery.send(user, _days(), META, mailer=m)
     assert out.sent is False and "is not allowed to send" in out.reason
+
+
+def test_the_mailgun_check_is_a_test_mode_send_so_a_sending_key_passes(monkeypatch):
+    """Mailgun scopes a domain sending key to POST /messages and /messages.mime.
+    The check used to read the domains API, which such a key may not touch, so
+    the key this service should be using was reported as rejected."""
+    posted = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self, *a):
+            return b'{"message": "Queued. Thank you."}'
+
+    def _open(url, *, data=None, headers=None, timeout=30):
+        posted.update(url=url, data=data)
+        return _Response()
+
+    monkeypatch.setattr(mailer, "open_url", _open)
+    m = mailer.MailgunMailer(api_key="key-1", domain="mg.example.invalid",
+                             sender="timesheet@example.invalid",
+                             base_url="https://api.eu.mailgun.net")
+    assert delivery.check_email(mailer=m) == ""
+    assert posted["url"] == "https://api.eu.mailgun.net/v3/mg.example.invalid/messages"
+    assert b'name="o:testmode"\r\n\r\nyes' in posted["data"]   # accepted, never delivered
+    assert b"/domains" not in posted["url"].encode()
+
+
+def test_a_refused_send_names_the_region_as_the_likely_cause(monkeypatch):
+    import io
+    import urllib.error
+
+    def _not_found(url, *, data=None, headers=None, timeout=30):
+        raise urllib.error.HTTPError(url, 404, "Not Found", {},
+                                     io.BytesIO(b'{"message": "Domain not found"}'))
+
+    monkeypatch.setattr(mailer, "open_url", _not_found)
+    m = mailer.MailgunMailer(api_key="key-1", domain="mg.example.invalid",
+                             sender="timesheet@example.invalid")
+    user = _user(delivery_channel="email", delivery_enabled=True,
+                 manager_email="boss@example.invalid")
+    out = delivery.send(user, _days(), META, mailer=m)
+    assert out.sent is False
+    assert "Domain not found" in out.reason and "MAILGUN_BASE_URL" in out.reason

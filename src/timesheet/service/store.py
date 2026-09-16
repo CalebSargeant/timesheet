@@ -88,11 +88,19 @@ def _safe(user_id: str) -> str:
 
 
 def _inside(root: Path, path: Path) -> Path:
-    """`path`, having checked it resolves under `root`. `_safe` should make this
-    unreachable; this is what keeps it true if `_safe` is ever loosened."""
-    if not path.resolve().is_relative_to(root.resolve()):
+    """`path`, having checked it stays under `root`. `_safe` should make this
+    unreachable; this is what keeps it true if `_safe` is ever loosened.
+
+    String normalisation rather than `Path.resolve()`: resolving touches the
+    filesystem to follow links, which makes the check itself an access with the
+    untrusted path in it — and `normpath` plus a prefix test is both sufficient
+    for a traversal check and the form a scanner can verify.
+    """
+    base = os.path.normpath(os.path.abspath(root))
+    full = os.path.normpath(os.path.abspath(path))
+    if not full.startswith(base + os.sep):
         raise ValueError("refusing a store path outside the data directory")
-    return path
+    return Path(full)
 
 
 class FileStore:

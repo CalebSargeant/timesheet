@@ -70,7 +70,7 @@ The selected period as a workbook, in the account's own language.
 | `401` | Not signed in |
 | `404` | Nothing recorded for that period |
 
-### `GET /d/{account}/{token}/timesheet.xlsx`
+### `GET /d/{uid}/{token}/timesheet.xlsx`
 The link sent to a manager. No session: the signature covers the account id, the
 filename **and** the expiry, so a valid link cannot be pointed at a different
 account by editing the path.

@@ -189,9 +189,10 @@ python -m timesheet.run --user alice   # one
 python -m timesheet.run --list         # who is registered
 ```
 
-The chart ships this as two CronJobs — a `*/15` refresh and one daily `--send` —
-because `--send` on a quarter-hourly schedule is thirty emails a day to somebody
-who asked for one.
+The chart ships this as two CronJobs, a `*/15` refresh and a weekly `--send` on
+Friday evening, because `--send` on a quarter-hourly schedule is thirty emails a
+day to somebody who asked for one a week. Friday rather than Monday because a run
+sends the week it falls in, so a Monday run would send the week that has just begun.
 
 One account's failure never stops the others, one failing *source* never costs a
 week (the others are still read, and what could not be read is said on the page),

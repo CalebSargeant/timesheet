@@ -121,9 +121,9 @@ secrets:
 # often — that frequency is what makes the live page current — and it sends
 # nothing, so running it every quarter of an hour is free of consequences.
 #
-# `deliverJob` SENDS, once, at the end of the day. Keeping delivery out of the
-# frequent job is the whole point of the split: `--send` on a */15 schedule is
-# thirty-odd emails to a manager every day.
+# `deliverJob` SENDS, once a week, at the end of the working week. Keeping
+# delivery out of the frequent job is the whole point of the split: `--send` on
+# a */15 schedule is thirty-odd emails to a manager every day.
 cronjob:
   enabled: true
   schedule: "*/15 6-20 * * 1-5"   # every 15 min through the working day
@@ -136,7 +136,11 @@ cronjob:
 
 deliverJob:
   enabled: true
-  schedule: "30 18 * * 1-5"       # 18:30 Mon-Fri
+  # The mail is the week's timesheet, so it goes once, on Friday. Friday and not
+  # Monday: `timesheet.run` sends the week containing the day it runs (today's
+  # date, whose Monday `collect` starts from), so a Monday run would send the
+  # week that has just begun instead of the one just worked.
+  schedule: "30 18 * * 5"         # 18:30 Fri
   timeZone: ""                    # defaults to cronjob.timeZone
   concurrencyPolicy: Forbid
   backoffLimit: 2

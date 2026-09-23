@@ -1,6 +1,6 @@
 {{/*
 Two CronJobs from one template: a frequent refresh that stores each account's
-week, and a once-a-day run that also delivers it. They are separate objects
+week, and a once-a-week run that also delivers it. They are separate objects
 because they want opposite schedules — the refresh is what keeps the live page
 current and wants to run every quarter of an hour, and `--send` on that schedule
 would mail a manager thirty times a day.

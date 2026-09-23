@@ -7,7 +7,7 @@ import time
 import pytest
 
 from timesheet.service import auth
-from timesheet.service.store import FileStore
+from timesheet.service.store import GITHUB, FileStore
 from timesheet.service.users import User, defaults
 
 KEY = "a-test-secret-key-long-enough-to-be-accepted"
@@ -258,3 +258,122 @@ def test_state_and_session_tokens_are_not_interchangeable():
     state = auth.make_state("/")
     assert auth.read_session(state) is None      # no uid in a state payload
     assert time.time() > 0                        # sanity: the clock is real
+
+
+# --- the GitHub token --------------------------------------------------------
+#
+# An OAuth app registered since GitHub's August 2026 change gets an access token
+# that lives eight hours and a refresh token that lives six months. Keeping only
+# the access token cost every account its GitHub activity eight hours after it
+# signed in, and nothing said so.
+
+UID = "github.com:1"
+PROVIDER = auth.Provider(client_id="cid", client_secret="csecret", host="github.com")
+EXPIRING = {"access_token": "ghu_new", "token_type": "bearer", "scope": "repo",
+            "expires_in": 28800, "refresh_token": "ghr_new",
+            "refresh_token_expires_in": 15811200}
+
+
+def _with_token(tmp_path, **cred) -> FileStore:
+    store = _store(tmp_path)
+    store.put_credential(UID, GITHUB, cred, account="alice")
+    return store
+
+
+def _answer(got: dict, calls: list | None = None):
+    def _post(url, data, *, timeout=20):
+        if calls is not None:
+            calls.append((url, data))
+        return got
+    return _post
+
+
+def test_an_expiring_sign_in_keeps_its_refresh_token_and_expiry(monkeypatch):
+    monkeypatch.setattr(auth, "_post_json", _answer(EXPIRING))
+    before = time.time()
+    tokens = auth.exchange(PROVIDER, "code")
+    assert tokens["access_token"] == "ghu_new"
+    assert tokens["refresh_token"] == "ghr_new"
+    assert int(before) + 28800 <= tokens["expires_at"] <= time.time() + 28800
+    assert tokens["refresh_expires_at"] > tokens["expires_at"]
+
+
+def test_a_token_that_never_expires_is_stored_as_it_always_was(monkeypatch):
+    monkeypatch.setattr(auth, "_post_json",
+                        _answer({"access_token": "gho_x", "token_type": "bearer"}))
+    assert auth.exchange(PROVIDER, "code") == {"access_token": "gho_x"}
+
+
+def test_a_live_token_is_used_as_it_is(tmp_path, monkeypatch):
+    store = _with_token(tmp_path, access_token="ghu_old", refresh_token="ghr_old",
+                        expires_at=time.time() + 3600)
+    calls: list = []
+    monkeypatch.setattr(auth, "_post_json", _answer(EXPIRING, calls))
+    assert auth.github_token(store, PROVIDER, UID) == "ghu_old"
+    assert calls == []
+
+
+def test_an_expiring_token_is_renewed_and_the_new_pair_stored(tmp_path, monkeypatch):
+    store = _with_token(tmp_path, access_token="ghu_old", refresh_token="ghr_old",
+                        expires_at=time.time() + 60)     # inside the renewal margin
+    calls: list = []
+    monkeypatch.setattr(auth, "_post_json", _answer(EXPIRING, calls))
+    assert auth.github_token(store, PROVIDER, UID) == "ghu_new"
+    url, data = calls[0]
+    assert url == "https://github.com/login/oauth/access_token"
+    assert data == {"client_id": "cid", "client_secret": "csecret",
+                    "grant_type": "refresh_token", "refresh_token": "ghr_old"}
+    # The old refresh token is spent the moment it is used, so the new one must
+    # be stored or the next renewal has nothing to renew with.
+    assert store.get_credential(UID, GITHUB)["refresh_token"] == "ghr_new"
+    assert store.credential_meta(UID, GITHUB)["account"] == "alice"
+
+
+def test_losing_the_renewal_race_uses_the_winners_token(tmp_path, monkeypatch):
+    """The web process and the refresh job can find the same expired token at
+    once. The second to renew is refused, but the first has stored a new pair."""
+    store = _with_token(tmp_path, access_token="ghu_old", refresh_token="ghr_old",
+                        expires_at=time.time() - 1)
+
+    def _beaten_to_it(url, data, *, timeout=20):
+        store.put_credential(UID, GITHUB, {"access_token": "ghu_winner",
+                                           "refresh_token": "ghr_winner",
+                                           "expires_at": time.time() + 28800})
+        return {"error": "bad_refresh_token"}
+
+    monkeypatch.setattr(auth, "_post_json", _beaten_to_it)
+    assert auth.github_token(store, PROVIDER, UID) == "ghu_winner"
+    assert store.get_credential(UID, GITHUB)["refresh_token"] == "ghr_winner"
+
+
+def test_a_refused_renewal_hands_back_the_old_token(tmp_path, monkeypatch):
+    """So GitHub's 401 on it tells the person to sign in again, instead of their
+    GitHub activity vanishing without a word."""
+    store = _with_token(tmp_path, access_token="ghu_old", refresh_token="ghr_old",
+                        expires_at=time.time() - 1)
+    monkeypatch.setattr(auth, "_post_json", _answer(
+        {"error": "bad_refresh_token", "error_description": "The refresh token is expired."}))
+    assert auth.github_token(store, PROVIDER, UID) == "ghu_old"
+    assert store.get_credential(UID, GITHUB)["refresh_token"] == "ghr_old"
+
+
+def test_a_token_stored_before_renewal_existed_is_passed_through(tmp_path, monkeypatch):
+    """No refresh token to renew with. If GitHub still takes it, nothing changes."""
+    store = _with_token(tmp_path, access_token="gho_legacy")
+    calls: list = []
+    monkeypatch.setattr(auth, "_post_json", _answer(EXPIRING, calls))
+    assert auth.github_token(store, PROVIDER, UID) == "gho_legacy"
+    assert calls == []
+
+
+def test_a_rejected_token_is_named_as_such(monkeypatch):
+    import urllib.error
+
+    def _unauthorised(req, *, timeout=20):
+        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(auth, "open_url", _unauthorised)
+    assert auth.github_problem(PROVIDER, "ghu_dead") == "GitHub no longer accepts this sign-in"
+    assert auth.github_problem(PROVIDER, "") == "no GitHub token is stored for this account"
+    monkeypatch.setattr(auth, "_get_json", lambda url, token: {"login": "alice"})
+    assert auth.github_problem(PROVIDER, "ghu_live") == ""

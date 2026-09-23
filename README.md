@@ -128,9 +128,16 @@ not be an open door.
 ## What is stored, and where
 
 Two things in the database would matter if it leaked, and neither is in the clear:
-your Microsoft refresh token and your GitHub token. Both are encrypted with
+your Microsoft refresh token and your GitHub tokens. Both are encrypted with
 AES-256-GCM under `SECRET_KEY`. With no key set, the service **refuses** to store
 them rather than falling back to plaintext.
+
+An OAuth app registered since GitHub's August 2026 change issues access tokens that
+expire after eight hours, with a refresh token that lasts six months. Both are
+stored, and the service renews the access token before it runs out. If GitHub stops
+accepting an account's token anyway (a refresh token left unused for six months, a
+revoked app, or a sign-in from before 0.3.2, when only the access token was kept),
+**Connections** says so and offers to sign in again, which replaces it.
 
 Every row is owned by exactly one account and every read takes that owner's id, so
 there is no query in this codebase capable of returning one person's week or token

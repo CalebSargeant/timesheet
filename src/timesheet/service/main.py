@@ -127,8 +127,7 @@ def _sources_for(user: users.User) -> Sources:
     if login:
         token = ""
         try:
-            cred = _store.get_credential(user.id, GITHUB)
-            token = (cred or {}).get("access_token", "")
+            token = auth.github_token(_store, _provider, user.id)
         except crypto.CryptoUnavailable:
             log.warning("cannot read the stored GitHub token for %s", user.login)
         gh = GitHub(user=login, token=token, host=user.setting("github_host") or user.host)
@@ -327,8 +326,8 @@ def callback(code: str = Query(default=""), state: str = Query(default="")):
     if not code:
         return _redirect("/")
     try:
-        token = auth.exchange(_provider, code)
-        profile, email, orgs = auth.identify(_provider, token)
+        tokens = auth.exchange(_provider, code)
+        profile, email, orgs = auth.identify(_provider, tokens["access_token"])
         user = auth.upsert(_store, _provider, _policy, profile, email, orgs, tz=_env_cfg.tz)
     except auth.NotAllowed as e:
         return HTMLResponse(web.landing(policy_line=_policy.describe(), configured=True,
@@ -339,9 +338,10 @@ def callback(code: str = Query(default=""), state: str = Query(default="")):
 
     # The OAuth token reads the user's own commits, PRs, issues and reviews — and
     # on a private-repo scope that is real access, so it is stored the same way
-    # the Microsoft one is.
+    # the Microsoft one is. The whole set, refresh token included: without it an
+    # expiring token leaves the account with no GitHub eight hours from now.
     try:
-        _store.put_credential(user.id, GITHUB, {"access_token": token}, account=user.login)
+        _store.put_credential(user.id, GITHUB, tokens, account=user.login)
     except crypto.CryptoUnavailable as e:
         log.error("cannot store the GitHub token: %s", e)
 
@@ -482,9 +482,13 @@ def connections(ts_session: str | None = Cookie(default=None),
     with contextlib.suppress(crypto.CryptoUnavailable):
         meta = _store.credential_meta(user.id, MICROSOFT)
     channel, _ = delivery.target_for(user, manual=True)
-    blocked = delivery.unavailable(channel, session=_sources_for(user).m365)
+    sources = _sources_for(user)
+    blocked = delivery.unavailable(channel, session=sources.m365)
+    github_problem = auth.github_problem(_provider,
+                                         sources.github.token if sources.github else "")
     return HTMLResponse(web.connections(
         user, csrf=auth.csrf_token(user.id), github_account=user.login, microsoft=meta,
+        github_problem=github_problem,
         can_store=crypto.available(), delivery_line=_delivery_line(user),
         message=message[:500], error=error[:500], delivery_blocked=blocked,
         mail_server=delivery.mail_server_line(), test_to=user.email))

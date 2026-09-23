@@ -86,6 +86,10 @@ account by editing the path.
 ### `GET /connections`
 What this account is linked to, and whether delivery is switched on.
 
+The GitHub line is checked against GitHub (`GET /user` with the stored token) on
+every view, so a token GitHub has stopped accepting shows as broken, with a link to
+`/auth/login?next=/connections` to sign in again.
+
 ### `POST /connect/microsoft`
 Starts a device-code sign-in and renders the code. Form field: `csrf`.
 

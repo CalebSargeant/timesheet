@@ -36,6 +36,7 @@ from zoneinfo import ZoneInfo
 
 from ..collectors.github import api_base, web_base
 from ..net import InsecureUrl, open_url
+from .store import GITHUB
 from .users import User, defaults, user_id
 
 log = logging.getLogger(__name__)
@@ -44,6 +45,9 @@ COOKIE = "ts_session"
 STATE_TTL = 600                     # ten minutes to finish a sign-in
 SESSION_TTL = 14 * 24 * 3600        # a fortnight
 DOTCOM = "github.com"
+# A GitHub token is renewed this long before its stated expiry, so a collector is
+# never handed one with seconds left that dies halfway through a week's searches.
+RENEW_MARGIN = 300
 
 POLICIES = ("single", "allowlist", "org", "open")
 
@@ -54,6 +58,10 @@ class AuthError(RuntimeError):
 
 class NotAllowed(AuthError):
     """The account is real, but this deployment does not admit it."""
+
+
+class Rejected(AuthError):
+    """GitHub no longer accepts this token, and only a new sign-in will fix it."""
 
 
 # --- configuration --------------------------------------------------------
@@ -295,23 +303,113 @@ def _get_json(url: str, token: str, *, timeout: int = 20):
     except InsecureUrl as e:
         raise AuthError(f"refusing to send a token to {url[:60]!r}") from e
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise Rejected("GitHub no longer accepts this sign-in") from e
         raise AuthError(f"GitHub returned HTTP {e.code} for {url.rsplit('/', 1)[-1]}") from e
     except urllib.error.URLError as e:
         raise AuthError(f"cannot reach {url}: {e.reason}") from e
 
 
-def exchange(provider: Provider, code: str) -> str:
-    """Authorization code -> an access token for that person."""
+def _token_set(got: dict, now: float) -> dict:
+    """What is stored for one GitHub sign-in.
+
+    An OAuth app registered since GitHub's August 2026 change is issued an access
+    token that lives eight hours, plus a refresh token that lives six months. Only
+    the access token used to be kept, so every account lost GitHub eight hours
+    after signing in. Expiry is stored as a moment, since `expires_in` means nothing
+    once the response that carried it is gone. A token that never expires comes
+    back without a refresh token and is stored as it always was.
+    """
+    tokens = {"access_token": got["access_token"]}
+    if got.get("refresh_token"):
+        tokens["refresh_token"] = got["refresh_token"]
+        if got.get("expires_in"):
+            tokens["expires_at"] = int(now + int(got["expires_in"]))
+        if got.get("refresh_token_expires_in"):
+            tokens["refresh_expires_at"] = int(now + int(got["refresh_token_expires_in"]))
+    return tokens
+
+
+def exchange(provider: Provider, code: str) -> dict:
+    """Authorization code -> that person's token set (see `_token_set`)."""
     got = _post_json(f"{provider.web}/login/oauth/access_token", {
         "client_id": provider.client_id,
         "client_secret": provider.client_secret,
         "code": code,
         "redirect_uri": provider.redirect_uri,
     })
-    token = got.get("access_token")
-    if not token:
+    if not got.get("access_token"):
         raise AuthError(f"GitHub refused the code: {got.get('error_description') or got}")
-    return token
+    return _token_set(got, time.time())
+
+
+def refresh(provider: Provider, refresh_token: str) -> dict:
+    """A new token set for a refresh token. GitHub's refresh tokens are single use:
+    the one passed in, and the access token it came with, stop working."""
+    got = _post_json(f"{provider.web}/login/oauth/access_token", {
+        "client_id": provider.client_id,
+        "client_secret": provider.client_secret,
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+    })
+    if not got.get("access_token"):
+        # A spent or expired refresh token comes back as HTTP 200 with an error
+        # body (`bad_refresh_token`), never as a status code.
+        raise Rejected(f"GitHub would not renew the sign-in: "
+                       f"{got.get('error_description') or got.get('error') or 'no token returned'}")
+    return _token_set(got, time.time())
+
+
+def github_token(store, provider: Provider, uid: str) -> str:
+    """This account's GitHub access token, renewed first if it is about to expire.
+
+    The web process and the scheduled job both call this, and a refresh token is
+    single use, so the two can race to renew the same one. The loser is refused,
+    but by then the winner has stored the new pair, so a refusal is checked
+    against the store before it is believed.
+
+    A token that cannot be renewed is returned anyway. GitHub's 401 on it is what
+    tells the person, on their own timesheet, to sign in again; returning nothing
+    would drop their GitHub activity without a word.
+    """
+    cred = store.get_credential(uid, GITHUB) or {}
+    token = cred.get("access_token", "")
+    renew_with = cred.get("refresh_token")
+    expires_at = cred.get("expires_at")
+    if not renew_with or not expires_at or expires_at - RENEW_MARGIN > time.time():
+        return token
+    try:
+        fresh = refresh(provider, renew_with)
+    except AuthError as e:
+        latest = store.get_credential(uid, GITHUB) or {}
+        if latest.get("refresh_token") != renew_with:
+            return latest.get("access_token", "")
+        log.warning("could not renew the GitHub sign-in for %s: %s", uid, e)
+        return token
+    try:
+        account = (store.credential_meta(uid, GITHUB) or {}).get("account", "")
+        store.put_credential(uid, GITHUB, fresh, account=account)
+    # The store's own failure, whatever it is. The new token in hand still works for
+    # this run; what is lost is the next renewal, as the old refresh token is spent.
+    except Exception:
+        log.exception("could not store the renewed GitHub sign-in for %s", uid)
+    return fresh["access_token"]
+
+
+def github_problem(provider: Provider, token: str) -> str:
+    """Why this account's GitHub token cannot be used, or "" if GitHub accepts it.
+
+    Asked of GitHub rather than worked out from the stored expiry: a token can also
+    be revoked, and a status that is green by arithmetic is how a dead connection
+    showed green on the Connections page for a week.
+    """
+    if not token:
+        return "no GitHub token is stored for this account"
+    try:
+        _get_json(f"{provider.api}/user", token)
+    except AuthError as e:
+        return str(e)
+    return ""
 
 
 def identify(provider: Provider, token: str) -> tuple[dict, str, list[str]]:

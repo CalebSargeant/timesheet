@@ -29,9 +29,9 @@ from zoneinfo import ZoneInfo
 from .config import Config
 from .llm import make_llm
 from .pipeline import Sources, collect
-from .service import crypto, delivery, users
+from .service import auth, crypto, delivery, users
 from .service import email as mailer_mod
-from .service.store import GITHUB, MICROSOFT, make_store
+from .service.store import MICROSOFT, make_store
 
 log = logging.getLogger("timesheet.run")
 
@@ -40,16 +40,17 @@ def _monday(d: date) -> date:
     return d - timedelta(days=d.weekday())
 
 
-def _sources(store, user: users.User) -> Sources:
+def _sources(store, user: users.User, provider: auth.Provider) -> Sources:
     """One account's connected credentials. Mirrors the service's own wiring —
     including persisting the rotated Microsoft refresh token, without which the
-    connection dies quietly after this run."""
+    connection dies quietly after this run, and renewing an expiring GitHub token,
+    without which GitHub goes quiet eight hours after the person signed in."""
     from .collectors.github import GitHub
     from .collectors.mcp_client import McpSession
 
     token = ""
     try:
-        token = (store.get_credential(user.id, GITHUB) or {}).get("access_token", "")
+        token = auth.github_token(store, provider, user.id)
     except crypto.CryptoUnavailable:
         log.warning("%s: cannot read the stored GitHub token", user.login)
     login = user.setting("github_user") or user.login
@@ -74,10 +75,10 @@ def _sources(store, user: users.User) -> Sources:
 
 def refresh_user(store, user: users.User, week: date, *, env_cfg: Config,
                  send: bool, backfill: int, mailer=None,
-                 public_url: str = "") -> dict:
+                 public_url: str = "", provider: auth.Provider | None = None) -> dict:
     """Rebuild one account's week (plus any missing recent weeks) and report."""
     cfg = env_cfg.with_settings(users.for_config(user.settings))
-    sources = _sources(store, user)
+    sources = _sources(store, user, provider or auth.Provider.from_env())
     llm = make_llm(cfg)
 
     build = collect(week, cfg, sources, llm=llm, full=True)
@@ -164,12 +165,13 @@ def main(argv: list[str]) -> int:
     backfill = int(os.environ.get("BACKFILL_WEEKS", "6"))
     mailer = mailer_mod.from_env()
     public_url = os.environ.get("PUBLIC_URL", "")
+    provider = auth.Provider.from_env()
 
     failures = 0
     for user in accounts:
         try:
             refresh_user(store, user, week, env_cfg=env_cfg, send=send, backfill=backfill,
-                         mailer=mailer, public_url=public_url)
+                         mailer=mailer, public_url=public_url, provider=provider)
         # Deliberately broad. A job serving twenty people that dies on the first
         # expired token has taken the service down for the other nineteen.
         except Exception:

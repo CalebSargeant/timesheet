@@ -7,7 +7,7 @@ from .config import Config
 from .model import ActivityEvent, Block, Commit, Day, Meeting
 from .reconstruct import reconstruct_day, reconstruct_week
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 __all__ = [
     "ActivityEvent",

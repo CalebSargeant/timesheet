@@ -240,12 +240,54 @@ def test_another_accounts_csrf_token_is_refused(app, client):
 # --- connections -----------------------------------------------------------
 
 
-def test_connections_reports_what_is_linked(app, client):
+def test_connections_reports_what_is_linked(app, client, monkeypatch):
+    from timesheet.service import auth
+    from timesheet.service.store import GITHUB
     sign_in(app, client)
+    app._store.put_credential(ALICE, GITHUB, {"access_token": "gho_live"}, account="alice")
+    monkeypatch.setattr(auth, "_get_json", lambda url, token: {"login": "alice"})
     page = client.get("/connections")
     assert page.status_code == 200
     assert "Connected as alice" in page.text
+    assert "Sign in to GitHub again" not in page.text
     assert "Not connected" in page.text            # Microsoft
+
+
+def test_connections_says_to_sign_in_again_when_github_refuses_the_token(
+        app, client, monkeypatch):
+    """The GitHub line used to be green unconditionally, so a token GitHub had
+    stopped accepting looked exactly like a working one."""
+    from timesheet.service import auth
+    from timesheet.service.store import GITHUB
+    sign_in(app, client)
+    app._store.put_credential(ALICE, GITHUB, {"access_token": "gho_dead"}, account="alice")
+
+    def _refused(url, token):
+        raise auth.Rejected("GitHub no longer accepts this sign-in")
+
+    monkeypatch.setattr(auth, "_get_json", _refused)
+    page = client.get("/connections").text
+    assert "Connected as alice" not in page
+    assert "GitHub no longer accepts this sign-in" in page
+    assert 'href="/auth/login?next=/connections"' in page
+
+
+def test_signing_in_stores_the_refresh_token_too(app, client, monkeypatch):
+    """Without it an expiring token leaves the account with no GitHub eight
+    hours after signing in."""
+    from timesheet.service import auth
+    from timesheet.service.store import GITHUB
+    monkeypatch.setattr(auth, "_post_json", lambda url, data, timeout=20: {
+        "access_token": "ghu_a", "expires_in": 28800, "refresh_token": "ghr_a",
+        "refresh_token_expires_in": 15811200, "token_type": "bearer"})
+    monkeypatch.setattr(auth, "identify", lambda provider, token: (
+        {"id": 1, "login": "alice", "name": "Alice"}, "a@x.invalid", []))
+    r = client.get(f"/auth/callback?code=c&state={auth.make_state('/')}",
+                   follow_redirects=False)
+    assert r.status_code == 303
+    stored = app._store.get_credential(ALICE, GITHUB)
+    assert stored["access_token"] == "ghu_a" and stored["refresh_token"] == "ghr_a"
+    assert stored["expires_at"] > 0
 
 
 def test_connecting_microsoft_shows_a_code(app, client, monkeypatch):

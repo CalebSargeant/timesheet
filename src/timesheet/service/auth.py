@@ -407,8 +407,12 @@ def github_problem(provider: Provider, token: str) -> str:
         return "no GitHub token is stored for this account"
     try:
         _get_json(f"{provider.api}/user", token)
-    except AuthError as e:
+    except Rejected as e:
         return str(e)
+    except AuthError:
+        # Could not reach GitHub to check. That is not a token problem, and
+        # telling the person to sign in again would not fix a network blip.
+        return ""
     return ""
 
 

@@ -107,7 +107,7 @@ def _dot(ok: bool) -> str:
 def connections(user: User, *, csrf: str, github_account: str, microsoft: dict | None,
                 can_store: bool, delivery_line: str, message: str = "",
                 error: str = "", delivery_blocked: str = "", mail_server: str = "",
-                test_to: str = "") -> str:
+                test_to: str = "", github_problem: str = "") -> str:
     ms_ok = bool(microsoft)
     ms_line = (f"Connected as {microsoft.get('account') or 'your Microsoft account'}"
                if ms_ok else "Not connected")
@@ -130,9 +130,18 @@ def connections(user: User, *, csrf: str, github_account: str, microsoft: dict |
     body = (
         note(message, "good") + note(error, "bad") + key_warning
         + "<h3 style='margin:0 0 6px'>GitHub</h3>"
-          f'<p class="status">{_dot(True)} Connected as {esc(github_account)} '
-          f'on {esc(user.host)}</p>'
-          '<p class="hint">Used for your commits, pull requests, issues and reviews. This '
+          + (f'<p class="status">{_dot(True)} Connected as {esc(github_account)} '
+             f'on {esc(user.host)}</p>'
+             if not github_problem else
+             f'<p class="status">{_dot(False)} Signed in as {esc(github_account)} '
+             f'on {esc(user.host)}, but GitHub cannot be read</p>'
+             # Signing in again is the whole fix, and it needs no sign-out first:
+             # the callback replaces the stored token for the same account.
+             + note(f"{github_problem[:1].upper()}{github_problem[1:]}. Until this is "
+                    "fixed your timesheet has no commits, pull requests or reviews.", "bad")
+             + '<div class="actions"><a class="btn primary" '
+               'href="/auth/login?next=/connections">Sign in to GitHub again</a></div>')
+        + '<p class="hint">Used for your commits, pull requests, issues and reviews. This '
           "is the account you signed in with.</p>"
           "<h3 style='margin:22px 0 6px'>Microsoft 365</h3>"
           f'<p class="status">{_dot(ms_ok)} {esc(ms_line)}</p>'

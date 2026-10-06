@@ -80,3 +80,19 @@ def test_the_callback_is_the_deployments_own_url():
     """Registered verbatim in the OAuth app; a mismatch is a redirect_uri error."""
     p = Provider(base_url="https://timesheet.example.invalid/")
     assert p.redirect_uri == "https://timesheet.example.invalid/auth/callback"
+
+
+def test_a_rejected_token_says_to_sign_in_again(monkeypatch):
+    """This text is shown above the person's own timesheet. A bare status code
+    there left three accounts without GitHub for a week and nobody the wiser."""
+    import urllib.error
+
+    from timesheet.collectors import github
+
+    def _unauthorised(req, *, timeout=30):
+        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(github, "open_url", _unauthorised)
+    with pytest.raises(github.GitHubError, match="sign in again") as caught:
+        GitHub(user="alice", token="ghu_dead", host="acme.ghe.com").get("/search/commits?q=x")
+    assert "/search/commits" in str(caught.value) and "q=x" not in str(caught.value)

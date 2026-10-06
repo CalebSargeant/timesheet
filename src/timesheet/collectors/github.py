@@ -112,7 +112,13 @@ class GitHub:
             with open_url(req, timeout=self.timeout) as r:
                 return json.loads(r.read())
         except urllib.error.HTTPError as e:
-            raise GitHubError(f"GitHub {e.code} on {path.split('?')[0]}") from e
+            where = path.split("?")[0]
+            if e.code == 401:
+                # An expired or revoked token. This text lands above the person's
+                # own timesheet, and a bare "401" there told nobody what to do.
+                raise GitHubError(f"GitHub no longer accepts your sign-in (401 on {where}); "
+                                  "sign in again from Connections") from e
+            raise GitHubError(f"GitHub {e.code} on {where}") from e
         except urllib.error.URLError as e:
             raise GitHubError(f"cannot reach {self.api}: {e.reason}") from e
 

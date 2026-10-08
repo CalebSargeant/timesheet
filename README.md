@@ -104,12 +104,13 @@ it signs in against an application pair that is already registered multi-tenant.
 Every scope is delegated, so it reaches exactly what you can already open in
 Outlook and Teams yourself, read-only.
 
-If your tenant blocks even that, there are two other calendar sources: a published
-`.ics` link (`M365_ICS_URL`) and a device-code Microsoft Graph sign-in
-(`pip install ".[graph]"`). Both give you meetings only, no mail and no chat.
-There is deliberately **no fallback between sources on failure** — silently
-swapping would make a broken connector look like a week with no meetings, and
-that reconstructs into a plausible, entirely wrong, all-admin sheet.
+The sign-in uses an MCP (Model Context Protocol) connector at `microsoft365.mcp.claude.com`,
+which handles the device-code flow without needing a local registration. If your tenant
+blocks that, there are two other calendar sources: a published `.ics` link (`M365_ICS_URL`)
+and a device-code Microsoft Graph sign-in (`pip install ".[graph]"`). Both give you
+meetings only, no mail and no chat. There is deliberately **no fallback between sources
+on failure** — silently swapping would make a broken connector look like a week with no
+meetings, and that reconstructs into a plausible, entirely wrong, all-admin sheet.
 
 ### Who can sign in
 

@@ -30,6 +30,7 @@ uvicorn timesheet.service.main:app --reload
 python -m timesheet.run            # all accounts, no delivery
 python -m timesheet.run --send     # all accounts + deliver
 python -m timesheet.run --user alice
+python -m timesheet.run --list     # who is registered
 ```
 
 ## Architecture

@@ -13,11 +13,13 @@ Algorithm (all deterministic):
                       themes, and finally generic admin.
 
 The day opens at 08:30 (earlier if activity shows it). Work past midnight rolls
-back to the day it started (day_rollover_hour). The in-progress day is capped at
-'now', and days that haven't happened yet are not emitted.
+back to the day it started (day_rollover_hour), and nothing runs past that hour
+the next morning. The in-progress day is capped at 'now', and days that haven't
+happened yet are not emitted.
 
-A full-day busy calendar event (leave) short-circuits all of this: that day is
-reported as the event, not reconstructed (see `full_day`).
+A full-day busy calendar event (leave, or a timed event of a day or more)
+short-circuits all of this: that day is reported as the event, not reconstructed
+(see `full_day`).
 """
 from __future__ import annotations
 
@@ -204,6 +206,12 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
     if floor is None:
         floor = cfg.min_day_minutes
     events = list(events or [])
+    # The work-day ends where the next one begins. Credits are estimates that add
+    # up, and a heavy day's ran on past six the next morning, over the top of that
+    # day; a meeting running past the boundary did the same.
+    close = _at(date, "00:00") + timedelta(days=1, hours=cfg.day_rollover_hour)
+    meetings = [Meeting(m.start, min(m.end, close), m.project, m.taak)
+                for m in meetings if m.start < close]
     if now is not None:                          # today: drop/clip anything after now
         meetings = [Meeting(m.start, min(m.end, now), m.project, m.taak)
                     for m in meetings if m.start < now]
@@ -266,8 +274,8 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
     activity_min = coding_min + noncommit_min
     fixed_min = sum(b.minutes for b in anchors)
     target = max(int(fixed_min + activity_min + comms_min + cfg.admin_floor_minutes), floor)
-    day_end = max(start + timedelta(minutes=target),
-                  max((b.end for b in anchors), default=start))
+    day_end = min(close, max(start + timedelta(minutes=target),
+                             max((b.end for b in anchors), default=start)))
     if now is not None:                          # never show blocks past the current moment
         day_end = min(day_end, now.replace(second=0, microsecond=0))
         if day_end <= start:                     # the day hasn't really started yet

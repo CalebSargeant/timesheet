@@ -12,8 +12,13 @@ from zoneinfo import ZoneInfo
 
 from ..config import Config
 from ..model import ActivityEvent, Commit, FullDayEvent, Meeting
+from ..reconstruct import logical_date
 
 _UTC = ZoneInfo("UTC")
+# A timed event this long is days away (a trip, leave typed in without ticking
+# all-day), not a meeting. As a meeting it landed whole on the day it started:
+# one Monday-to-Friday event made a 106-hour Monday.
+_MULTI_DAY = timedelta(hours=24)
 
 
 def _clean_subject(s: str) -> str:
@@ -39,7 +44,7 @@ def normalize_meetings(raw: list[dict], cfg: Config, tz: ZoneInfo) -> list[Meeti
             continue
         start = _as_utc(m["start_utc"]).astimezone(tz)
         end = _as_utc(m["end_utc"]).astimezone(tz)
-        if end <= start:
+        if end <= start or end - start >= _MULTI_DAY:     # the latter: see normalize_full_days
             continue
         if any(mk in low for mk in cfg.standup_markers):
             project = labels.standup_project
@@ -58,13 +63,25 @@ def normalize_full_days(raw: list[dict], cfg: Config, tz: ZoneInfo) -> list[Full
     event midnight bounds with an *exclusive* end, whether that midnight is
     expressed in UTC (a bare ICS DATE) or local; converting to local first makes
     the covered dates right either way. All-day items marked 'free' (desk
-    bookings) are not absences and never match."""
+    bookings) are not absences and never match.
+
+    A timed event of a day or more is treated the same way, covering the work-days
+    from its start to its last moment. It is days away, and the sheet reports it as
+    those days rather than as one meeting a hundred hours long."""
     labels = cfg.labels
     out: list[FullDayEvent] = []
     if not cfg.full_day_owns_day:
         return out
     for m in raw:
-        if not m.get("all_day"):
+        start = _as_utc(m["start_utc"]).astimezone(tz)
+        end = _as_utc(m["end_utc"]).astimezone(tz)
+        if m.get("all_day"):
+            first, last = start.date(), end.date()                # end exclusive
+        elif end - start >= _MULTI_DAY:
+            roll = cfg.day_rollover_hour
+            first = logical_date(start, roll)
+            last = logical_date(end - timedelta(microseconds=1), roll) + timedelta(days=1)
+        else:
             continue
         # Missing show_as is treated as "busy" (blocking) here, unlike normalize_meetings
         # where it defaults to "" (free). All-day events without the field are absences.
@@ -74,8 +91,6 @@ def normalize_full_days(raw: list[dict], cfg: Config, tz: ZoneInfo) -> list[Full
         low = subj.lower()
         if any(mk in low for mk in cfg.drop_subject_markers):
             continue
-        first = _as_utc(m["start_utc"]).astimezone(tz).date()
-        last = _as_utc(m["end_utc"]).astimezone(tz).date()      # exclusive
         span = max(1, min((last - first).days, cfg.full_day_max_span))
         cleaned = _clean_subject(subj)
         blank = cleaned.lower() in cfg.leave_blank_subjects     # 'availability only' calendar

@@ -341,3 +341,28 @@ def test_no_block_is_left_overlapping_after_the_budget_trims_the_last_one():
     day = _day([_meeting(9, 0, 10, 0), _meeting(20, 0, 21, 0)])
     for a, b in pairwise(day.blocks):
         assert a.end <= b.start
+
+
+def test_no_day_runs_into_the_next():
+    """Every credit is an estimate, and they add up: eight commit sessions with
+    their lead-ins, a day of chat and nine meetings came to 24.6 hours and ran on
+    to 06:36 the next morning, over the top of that day. A meeting running past
+    the boundary did the same. A day now stops where the next one begins."""
+    from timesheet.model import ActivityEvent, Meeting
+    monday = datetime(2026, 7, 20, tzinfo=TZ)
+    tue = monday + timedelta(days=1)
+    meetings = [Meeting(monday.replace(hour=20), tue.replace(hour=9), "Meeting", "Release")]
+    meetings += [Meeting(tue.replace(hour=h), tue.replace(hour=h, minute=50), "Meeting", f"m{h}")
+                 for h in range(9, 17)]
+    every_2h31 = ((6, 0), (8, 31), (11, 2), (13, 33), (16, 4), (18, 35), (21, 6), (23, 37))
+    commits = [Commit(tue.replace(hour=h, minute=m), "infra", f"fix: thing {h}")
+               for h, m in every_2h31]
+    chat = [ActivityEvent(tue.replace(hour=h), "chat") for h in range(6, 24)]
+    days = reconstruct_week(meetings, commits, monday, CFG, events=chat,
+                            now=datetime(2026, 8, 1, 12, 0, tzinfo=TZ))
+    every = sorted((b for d in days for b in d.blocks), key=lambda b: b.start)
+    for a, b in pairwise(every):
+        assert a.end <= b.start, f"{a.taak} {a.start:%a %H:%M} overlaps {b.taak} {b.start:%a %H:%M}"
+    for d in days:
+        assert d.blocks[-1].end <= d.date + timedelta(days=1, hours=CFG.day_rollover_hour)
+        assert d.minutes <= 24 * 60

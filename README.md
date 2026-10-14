@@ -27,7 +27,7 @@ Each signal is weighted differently, because they are not worth the same.
 | Signal | Where it comes from | How it becomes time |
 | --- | --- | --- |
 | **Meetings** | calendar | real start and end — fixed anchors the day is built around |
-| **Leave** | an all-day busy calendar event | owns the whole day; nothing is reconstructed around it |
+| **Leave** | an all-day busy calendar event, or a timed one of 24h or more | owns each day it covers; nothing is reconstructed around it |
 | **Commits** | GitHub / GitHub Enterprise | clustered into coding sessions (the session heuristic) |
 | **PRs, issues, reviews** | GitHub | credited per item, capped per day |
 | **Mail you sent** | Microsoft 365 | clustered into sittings, clipped against meetings, capped |

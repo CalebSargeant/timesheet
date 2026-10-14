@@ -202,7 +202,7 @@ def _current_week(user: users.User, cfg: Config, monday: date,
     meta = _store.meta_of(user.id, monday) or {}
     age = _age_seconds(meta.get("generated_at"))
     if stored and meta.get("full") and age is not None and age <= LIVE_MAX_AGE:
-        return stored, []
+        return stored, list(meta.get("problems") or [])
 
     build = _collect(user, cfg, monday, sources)
     if build.days:
@@ -227,13 +227,14 @@ def _week_days(user: users.User, cfg: Config, monday: date,
         return _current_week(user, cfg, monday, sources)
     cached = _store.get_days(user.id, monday)
     if cached is not None:
-        return cached, []
+        # What was missing when it was stored, so a thin week says why it is thin.
+        return cached, list((_store.meta_of(user.id, monday) or {}).get("problems") or [])
     build = _collect(user, cfg, monday, sources)
     if build.days:
         # Never cache an empty week. Reaching here with nothing usually means the
         # account has not connected anything yet, not that the week was empty —
         # and a cached blank would outlive the connection that fixes it.
-        _store.save(user.id, monday, {}, build.days)
+        _store.save(user.id, monday, {}, build.days, problems=build.problems)
     return build.days, list(build.problems)
 
 

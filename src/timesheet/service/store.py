@@ -38,11 +38,12 @@ GITHUB = "github"
 MICROSOFT = "microsoft"
 
 
-def _meta(days: list[Day], week_start: date, generated: datetime, full: bool = False) -> dict:
+def _meta(days: list[Day], week_start: date, generated: datetime, full: bool = False,
+          problems: tuple[str, ...] = ()) -> dict:
     total = sum(d.minutes for d in days)
     return {"week_start": week_start.isoformat(), "generated_at": generated.isoformat(),
             "total_minutes": total, "total_hm": hm(total), "days": len(days),
-            "logic_version": RECONSTRUCT_VERSION, "full": full}
+            "logic_version": RECONSTRUCT_VERSION, "full": full, "problems": list(problems)}
 
 
 def _is_current(meta: dict | None) -> bool:
@@ -50,6 +51,17 @@ def _is_current(meta: dict | None) -> bool:
     logic. Anything older (or unstamped) is treated as a miss so a deploy quietly
     recomputes it — no manual cache clearing after a logic change."""
     return bool(meta) and meta.get("logic_version") == RECONSTRUCT_VERSION
+
+
+def _complete(meta: dict | None) -> bool:
+    """Built by the refresh job with every source read. Anything less is rebuilt.
+
+    A week built while one source was failing used to be marked full like any
+    other, and a full week is never rebuilt: the weeks stored while GitHub sign-ins
+    were expiring kept their missing hours after sign-in was fixed. A week stored
+    before `problems` was recorded cannot show it was complete, so it is rebuilt once.
+    """
+    return _is_current(meta) and bool(meta.get("full")) and meta.get("problems") == []
 
 
 def _usable(days: list | None) -> bool:
@@ -201,8 +213,8 @@ class FileStore:
         return self._weeks_dir(user_id) / f"week-{monday.isoformat()}.json"
 
     def save(self, user_id: str, week_start: date, payload: dict, days: list[Day],
-             full: bool = False) -> dict:
-        meta = _meta(days, week_start, datetime.now(self.tz), full=full)
+             full: bool = False, problems: tuple[str, ...] = ()) -> dict:
+        meta = _meta(days, week_start, datetime.now(self.tz), full=full, problems=problems)
         p = self._path(user_id, week_start)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(
@@ -223,8 +235,7 @@ class FileStore:
         return [Day.from_dict(x) for x in doc["days"]]
 
     def is_full(self, user_id: str, monday: date) -> bool:
-        m = self.meta_of(user_id, monday)
-        return _is_current(m) and bool(m.get("full"))
+        return _complete(self.meta_of(user_id, monday))
 
     def latest_meta(self, user_id: str) -> dict:
         metas = []
@@ -385,8 +396,8 @@ class PgStore:
     # --- weeks ---
 
     def save(self, user_id: str, week_start: date, payload: dict, days: list[Day],
-             full: bool = False) -> dict:
-        meta = _meta(days, week_start, datetime.now(self.tz), full=full)
+             full: bool = False, problems: tuple[str, ...] = ()) -> dict:
+        meta = _meta(days, week_start, datetime.now(self.tz), full=full, problems=problems)
         with self._conn() as c:
             c.execute(
                 """INSERT INTO timesheet_week
@@ -421,8 +432,7 @@ class PgStore:
         return self._json(row[0]) if row and row[0] is not None else None
 
     def is_full(self, user_id: str, monday: date) -> bool:
-        meta = self.meta_of(user_id, monday)
-        return _is_current(meta) and bool(meta.get("full"))
+        return _complete(self.meta_of(user_id, monday))
 
     def latest_meta(self, user_id: str) -> dict:
         with self._conn() as c:

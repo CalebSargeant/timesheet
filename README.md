@@ -158,6 +158,11 @@ or any range you picked — or tick *Send my week automatically* and let the
 scheduled job do it. The two are separate on purpose: the switch governs what
 leaves unattended, and the button always works.
 
+The scheduled job never sends a week it could not read in full. If a source
+failed (an expired GitHub sign-in, a lapsed Microsoft connection), the week is
+held back and *you* get an email subject-prefixed `[not sent]` naming what failed
+and linking to the week, so you can fix it and press **Send**.
+
 Two things on **Connections** answer "will this actually send?" without involving
 your manager:
 
@@ -205,7 +210,8 @@ sends the week it falls in, so a Monday run would send the week that has just be
 One account's failure never stops the others, one failing *source* never costs a
 week (the others are still read, and what could not be read is said on the page),
 and a run in which everything failed never overwrites a good stored week with a
-blank one.
+blank one. A week stored while a source was failing remembers it: the page says
+what was missing, and the next run that reads everything rebuilds it.
 
 ## Deploy
 

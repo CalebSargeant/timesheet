@@ -2,8 +2,8 @@ apiVersion: v2
 name: timesheet
 description: Reconstruct a working week from calendar, mail, chat and GitHub activity
 type: application
-version: 0.3.5
-appVersion: "0.3.5"
+version: 0.3.6
+appVersion: "0.3.6"
 home: https://github.com/calebsargeant/timesheet
 sources:
   - https://github.com/calebsargeant/timesheet

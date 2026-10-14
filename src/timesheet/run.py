@@ -87,7 +87,7 @@ def refresh_user(store, user: users.User, week: date, *, env_cfg: Config,
     for problem in build.problems:
         log.warning("%s: %s", user.login, problem)
     if days or not build.problems:
-        meta = store.save(user.id, monday, {}, days, full=True)
+        meta = store.save(user.id, monday, {}, days, full=True, problems=build.problems)
         log.info("%s: week %s — %s across %s days",
                  user.login, meta["week_start"], meta["total_hm"], meta["days"])
     else:
@@ -99,6 +99,10 @@ def refresh_user(store, user: users.User, week: date, *, env_cfg: Config,
         log.error("%s: nothing could be read for %s; keeping the stored week",
                   user.login, monday)
 
+    # A source failing for this week fails for the older ones too, and rebuilding
+    # them now would only store more incomplete weeks. They wait for a clean run.
+    if build.problems:
+        backfill = 0
     for i in range(1, backfill + 1):
         m = _monday(week) - timedelta(days=7 * i)
         if store.is_full(user.id, m):
@@ -109,12 +113,10 @@ def refresh_user(store, user: users.User, week: date, *, env_cfg: Config,
             log.warning("%s: backfill of %s failed", user.login, m, exc_info=True)
             continue
         if not older.days and older.problems:
-            # Same rule as the current week, and for the same reason: a week
-            # marked full is never rebuilt, so storing a failed read as "full"
-            # would make it permanent.
+            # Same rule as the current week: a blank never replaces a stored week.
             log.warning("%s: backfill of %s read nothing; leaving it", user.login, m)
             continue
-        store.save(user.id, m, {}, older.days, full=True)
+        store.save(user.id, m, {}, older.days, full=True, problems=older.problems)
         log.info("%s: backfilled %s (%d days)", user.login, m.isoformat(), len(older.days))
 
     result = {"user": user.login, "week": meta["week_start"],
@@ -124,7 +126,7 @@ def refresh_user(store, user: users.User, week: date, *, env_cfg: Config,
         log.warning("%s: not delivering an empty week", user.login)
     elif send:
         out = delivery.send(user, days, meta, session=sources.m365, mailer=mailer,
-                            public_url=public_url)
+                            public_url=public_url, problems=build.problems)
         result["delivery"] = out.describe()
         log.info("%s: %s", user.login, out.describe())
     return result

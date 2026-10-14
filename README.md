@@ -27,7 +27,7 @@ Each signal is weighted differently, because they are not worth the same.
 | Signal | Where it comes from | How it becomes time |
 | --- | --- | --- |
 | **Meetings** | calendar | real start and end — fixed anchors the day is built around |
-| **Leave** | an all-day busy calendar event | owns the whole day; nothing is reconstructed around it |
+| **Leave** | an all-day busy calendar event, or a timed one of 24h or more | owns each day it covers; nothing is reconstructed around it |
 | **Commits** | GitHub / GitHub Enterprise | clustered into coding sessions (the session heuristic) |
 | **PRs, issues, reviews** | GitHub | credited per item, capped per day |
 | **Mail you sent** | Microsoft 365 | clustered into sittings, clipped against meetings, capped |
@@ -104,12 +104,13 @@ it signs in against an application pair that is already registered multi-tenant.
 Every scope is delegated, so it reaches exactly what you can already open in
 Outlook and Teams yourself, read-only.
 
-If your tenant blocks even that, there are two other calendar sources: a published
-`.ics` link (`M365_ICS_URL`) and a device-code Microsoft Graph sign-in
-(`pip install ".[graph]"`). Both give you meetings only, no mail and no chat.
-There is deliberately **no fallback between sources on failure** — silently
-swapping would make a broken connector look like a week with no meetings, and
-that reconstructs into a plausible, entirely wrong, all-admin sheet.
+The sign-in uses an MCP (Model Context Protocol) connector at `microsoft365.mcp.claude.com`,
+which handles the device-code flow without needing a local registration. If your tenant
+blocks that, there are two other calendar sources: a published `.ics` link (`M365_ICS_URL`)
+and a device-code Microsoft Graph sign-in (`pip install ".[graph]"`). Both give you
+meetings only, no mail and no chat. There is deliberately **no fallback between sources
+on failure** — silently swapping would make a broken connector look like a week with no
+meetings, and that reconstructs into a plausible, entirely wrong, all-admin sheet.
 
 ### Who can sign in
 
@@ -156,6 +157,11 @@ the timesheet — which sends exactly the period on screen, this week or last mo
 or any range you picked — or tick *Send my week automatically* and let the
 scheduled job do it. The two are separate on purpose: the switch governs what
 leaves unattended, and the button always works.
+
+The scheduled job never sends a week it could not read in full. If a source
+failed (an expired GitHub sign-in, a lapsed Microsoft connection), the week is
+held back and *you* get an email subject-prefixed `[not sent]` naming what failed
+and linking to the week, so you can fix it and press **Send**.
 
 Two things on **Connections** answer "will this actually send?" without involving
 your manager:
@@ -204,7 +210,8 @@ sends the week it falls in, so a Monday run would send the week that has just be
 One account's failure never stops the others, one failing *source* never costs a
 week (the others are still read, and what could not be read is said on the page),
 and a run in which everything failed never overwrites a good stored week with a
-blank one.
+blank one. A week stored while a source was failing remembers it: the page says
+what was missing, and the next run that reads everything rebuilds it.
 
 ## Deploy
 

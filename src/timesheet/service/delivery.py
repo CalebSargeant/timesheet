@@ -109,18 +109,27 @@ def target_for(user: User, *, manual: bool = False) -> tuple[str, str]:
 
 
 def send(user: User, days, meta: dict, *, session=None, mailer=None,
-         public_url: str = "", manual: bool = False, period: str = "") -> Delivery:
+         public_url: str = "", manual: bool = False, period: str = "",
+         problems: tuple[str, ...] = ()) -> Delivery:
     """Deliver one user's timesheet over their configured channel.
 
     `period` is the query string identifying what is being sent (`period=...` or
     `from=...&to=...`), so the link in the message opens the same range the
     sender was looking at rather than defaulting to this week.
+
+    `problems` are the sources the scheduled run could not read. Such a week is
+    held back and the account holder told why: a week without its GitHub activity
+    went to the manager every Friday for a month, padded out with admin time, and
+    nothing on the sheet said so.
     """
     channel, target = target_for(user, manual=manual)
     if channel == "none":
         return Delivery("none", False, reason="delivery is switched off for this account")
     if not target:
         return Delivery(channel, False, reason=f"no recipient configured for {channel}")
+    if problems:
+        return _hold(user, meta, problems, channel, target, mailer=mailer,
+                     public_url=public_url)
 
     strings = user.strings
     if channel == "email":
@@ -157,6 +166,22 @@ def send(user: User, days, meta: dict, *, session=None, mailer=None,
         log.warning("chat delivery to %s failed: %s", target, e)
         return Delivery("chat", False, target=target, reason=str(e)[:200])
     return Delivery("chat", True, target=target)
+
+
+def _hold(user: User, meta: dict, problems: tuple[str, ...], channel: str, target: str, *,
+          mailer=None, public_url: str = "") -> Delivery:
+    """Not sent, and the account holder emailed why. Never the manager."""
+    reason = "held back, part of the week could not be read: " + "; ".join(problems)
+    to = (user.email or "").strip()
+    why = "no email address on the account" if not to else unavailable("email", mailer=mailer)
+    if why:
+        return Delivery(channel, False, target=target, reason=f"{reason}. Not told: {why}")
+    try:
+        mailer_mod.send_held(to, meta, problems, target=target, strings=user.strings,
+                             mailer=mailer, sender_name=user.display, public_url=public_url)
+    except mailer_mod.MailError as e:
+        return Delivery(channel, False, target=target, reason=f"{reason}. Not told: {e}"[:500])
+    return Delivery(channel, False, target=target, reason=f"{reason}. Told {to}")
 
 
 def signed_link(user: User, public_url: str, period: str = "") -> str:

@@ -143,7 +143,10 @@ deliverJob:
   schedule: "30 18 * * 5"         # 18:30 Fri
   timeZone: ""                    # defaults to cronjob.timeZone
   concurrencyPolicy: Forbid
-  backoffLimit: 2
+  # Never retried. The run exits non-zero when any one account fails, and a retry
+  # re-runs every account, so each manager already mailed would be mailed again.
+  # A failed account is logged and the Job shows Failed; its holder can press Send.
+  backoffLimit: 0
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 1
 

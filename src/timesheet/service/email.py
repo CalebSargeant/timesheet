@@ -35,6 +35,7 @@ import urllib.error
 import urllib.parse
 import uuid
 from dataclasses import dataclass
+from datetime import date, timedelta
 from email.message import EmailMessage
 from email.utils import formataddr, parseaddr
 
@@ -303,3 +304,23 @@ def send_test(to: str, *, strings, mailer=None, sender_name: str = "", reply_to:
         msg.add_attachment(xlsx, maintype=XLSX_MIME[0], subtype=XLSX_MIME[1],
                            filename="timesheet-test.xlsx")
     mailer.send(msg)
+
+
+def send_held(to: str, meta: dict, problems, *, target: str, strings, mailer=None,
+              sender_name: str = "", public_url: str = "") -> None:
+    """Tell the account holder their week was not sent, and why."""
+    mailer = mailer or from_env()
+    week = meta.get("week_start", "")
+    total = hm(meta.get("total_minutes", 0))
+    link = ""
+    if public_url and week:
+        end = (date.fromisoformat(week) + timedelta(days=6)).isoformat()
+        link = f"{public_url}/?from={week}&to={end}\n"
+    reasons = "\n".join(f"  - {p}" for p in problems)
+    mailer.send(_envelope(
+        to=to, mailer=mailer, sender_name=sender_name,
+        subject=f"[not sent] {strings.mail_subject.format(week=week, total=total)}",
+        body=(f"Your timesheet for the week of {week} was not sent to {target}, "
+              f"because part of it could not be read:\n\n{reasons}\n\n"
+              "Sent like that it would understate the week. Fix what is listed above, "
+              "then open the week and press Send.\n" + link)))

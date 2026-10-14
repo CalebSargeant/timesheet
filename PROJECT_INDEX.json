@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-07",
+  "generated": "2026-10-08",
   "version": "0.3.3",
   "description": "Reconstructs a working week from calendar, mail, chat, and GitHub activity; renders HTML and XLSX.",
   "entry_points": {

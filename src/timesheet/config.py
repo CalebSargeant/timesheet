@@ -36,7 +36,10 @@ from . import i18n
 #      last thing in the calendar, but only `target` minutes of it are filled, so
 #      one evening meeting no longer pads the afternoon before it with admin.
 #      Leave books the person's own normal day instead of a fixed eight hours.
-RECONSTRUCT_VERSION = 13
+# v14: no day runs past the next day's rollover hour, and a timed calendar event of
+#      24h or more owns the days it covers like an all-day one. It used to land
+#      whole on its first day: one Monday-to-Friday event made a 106-hour Monday.
+RECONSTRUCT_VERSION = 14
 
 
 @dataclass(frozen=True)

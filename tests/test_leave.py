@@ -112,6 +112,16 @@ def test_multi_day_leave_expands_all_dates_weekends_filtered_by_reconstruct():
     assert [d.date.date() for d in later] == [date(2026, 8, 10)]      # Monday of the next week
 
 
+def test_leave_typed_in_as_a_timed_event_owns_its_days_too():
+    """Leave entered by hand without ticking all-day is one timed event, Monday
+    morning to Friday evening. As a meeting it all landed on the Monday: 106 hours."""
+    trip = {"subject": "Vakantie", "all_day": False, "show_as": "oof",
+            "start_utc": "2026-08-03T06:00:00", "end_utc": "2026-08-07T16:00:00"}
+    days, cfg = _week([trip])
+    assert [d.date.date() for d in days] == [date(2026, 8, n) for n in range(3, 8)]
+    assert {(d.minutes, d.blocks[0].kind) for d in days} == {(cfg.min_day_minutes, "leave")}
+
+
 def test_future_leave_is_not_reported_yet():
     cfg = BASE
     assert _week([LEAVE])[0], "sanity: past leave shows"

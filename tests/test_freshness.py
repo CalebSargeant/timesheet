@@ -44,10 +44,11 @@ def _days(hours: int = 8) -> list[Day]:
                                           "Development", "work", "focus")])]
 
 
-def _store_week(main, user, days, *, age_seconds: int, full: bool = True):
+def _store_week(main, user, days, *, age_seconds: int, full: bool = True,
+                problems: tuple[str, ...] = ()):
     """A stored week, aged by rewriting the timestamp the store just wrote."""
     main._store.save_user(user)
-    main._store.save(user.id, MONDAY, {}, days, full=full)
+    main._store.save(user.id, MONDAY, {}, days, full=full, problems=problems)
     path = main._store._path(user.id, MONDAY)
     import json
     doc = json.loads(path.read_text())
@@ -65,6 +66,20 @@ def test_a_fresh_stored_week_is_served_without_a_live_rebuild(main, monkeypatch)
     days, notes = main._week_days(user, Config(tz="Europe/Amsterdam"), MONDAY)
     assert sum(d.minutes for d in days) == 480
     assert notes == []
+
+
+def test_a_stored_week_says_what_could_not_be_read_for_it(main, monkeypatch):
+    """A week stored with a source missing is short. Served without a word, it
+    looks like a quiet week rather than a broken connection."""
+    user = _user()
+    gone = ("GitHub commits: GitHub 401 on /search/commits",)
+    _store_week(main, user, _days(8), age_seconds=60, problems=gone)
+    last = MONDAY - timedelta(days=7)
+    main._store.save(user.id, last, {}, _days(8), full=True, problems=gone)
+    monkeypatch.setattr(main, "collect", lambda *a, **k: pytest.fail("rebuilt a stored week"))
+    cfg = Config(tz="Europe/Amsterdam")
+    assert main._week_days(user, cfg, MONDAY)[1] == list(gone)     # this week
+    assert main._week_days(user, cfg, last)[1] == list(gone)       # a past one
 
 
 def test_a_stale_stored_week_is_rebuilt_live(main, monkeypatch):

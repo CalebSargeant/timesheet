@@ -55,6 +55,29 @@ def test_is_full_reflects_saved_flag(tmp_path):
     assert s.is_full(ALICE, monday) is True
 
 
+def test_a_week_built_with_a_source_failing_is_not_full(tmp_path):
+    """Full meant "the refresh ran", even when GitHub had answered 401 to all of
+    it, and a full week is never rebuilt — so those weeks stayed short for good."""
+    s = FileStore(str(tmp_path))
+    monday = date(2026, 7, 20)
+    s.save(ALICE, monday, {}, [_day(monday)], full=True, problems=("GitHub commits: 401",))
+    assert s.is_full(ALICE, monday) is False
+    assert s.meta_of(ALICE, monday)["problems"] == ["GitHub commits: 401"]
+
+
+def test_a_week_stored_before_problems_were_recorded_is_rebuilt(tmp_path):
+    import json
+    s = FileStore(str(tmp_path))
+    monday = date(2026, 7, 20)
+    s.save(ALICE, monday, {}, [_day(monday)], full=True)
+    path = s._path(ALICE, monday)
+    doc = json.loads(path.read_text())
+    del doc["meta"]["problems"]
+    path.write_text(json.dumps(doc))
+    assert s.is_full(ALICE, monday) is False
+    assert s.get_days(ALICE, monday) is not None     # still served meanwhile
+
+
 def test_one_users_week_is_not_visible_to_another(tmp_path):
     """The whole security model of a multi-user deployment. Every read takes an
     owner and there is no query here capable of crossing accounts."""

@@ -213,7 +213,7 @@ credited, so pushing in a reply you typed during a call adds nothing.
   "total_hm": "40:00",
   "total_minutes": 2400,
   "days": 5,
-  "logic_version": 13,
+  "logic_version": 15,
   "full": false,
   "generated_at": "2026-07-24T18:30:00+02:00"
 }
@@ -249,7 +249,7 @@ running?" must be answerable without doing the refresh job's work in the request
   "week_start": "2026-09-14",
   "total_hm": "23:12",
   "generated_at": "2026-09-16T09:35:02+02:00",
-  "logic_version": 13,
+  "logic_version": 15,
   "full": true,
   "days": 3,
   "total_minutes": 1392

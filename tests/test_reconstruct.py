@@ -366,3 +366,21 @@ def test_no_day_runs_into_the_next():
     for d in days:
         assert d.blocks[-1].end <= d.date + timedelta(days=1, hours=CFG.day_rollover_hour)
         assert d.minutes <= 24 * 60
+
+
+def test_a_merge_is_a_moment_not_a_coding_session():
+    """A squash-merged PR is stamped when it merged; its work happened on a branch
+    the commit search never sees. Counted as commits, a day of merges ending in a
+    batch of seven at 20:09 opened at 08:20 and ran past seven the next morning."""
+    stamps = ["08:20", "11:43", "11:57", "13:13", "14:03", "14:42", "15:12", "16:41",
+              "20:09", "20:09", "20:10", "20:10", "20:12", "20:13", "20:14", "21:35", "22:24"]
+    raw = [{"ts_local": f"2026-07-20T{t}:00+02:00", "repo": "infra",
+            "message": f"fix(security): rotate secret {i} (#{700 + i})"}
+           for i, t in enumerate(stamps)]
+    merges = normalize_commits(raw, TZ)
+    assert {c.kind for c in merges} == {"merge"}
+    assert normalize_commits([dict(raw[0], message="fix: a thing")], TZ)[0].kind == "commit"
+    day = _day(commits=merges)
+    assert day.minutes == CFG.min_day_minutes
+    assert day.blocks[0].start.strftime("%H:%M") == CFG.day_start     # a merge doesn't open the day
+    assert any("rotate secret" in b.taak.lower() for b in day.blocks)  # but it still labels it

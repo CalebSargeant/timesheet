@@ -220,6 +220,7 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
     if not _worked(meetings, day_events, events):
         return Day(date=date, blocks=[], dropped_after_hours=0)
     day_commits = [c for c in day_events if c.kind == "commit"]
+    day_merges = [c for c in day_events if c.kind == "merge"]
     day_reviews = [c for c in day_events if c.kind == "review"]
     day_prs = [c for c in day_events if c.kind == "pr"]
     day_issues = [c for c in day_events if c.kind == "issue"]
@@ -267,7 +268,7 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
     # capped per day — NOT via git-hours: these are point events, not 2h of lead-in.
     noncommit_min = min(
         len(day_reviews) * cfg.review_minutes_each
-        + len(day_prs) * cfg.pr_minutes_each
+        + (len(day_prs) + len(day_merges)) * cfg.pr_minutes_each
         + len(day_issues) * cfg.issue_minutes_each,
         cfg.noncommit_cap_minutes,
     )
@@ -292,7 +293,9 @@ def reconstruct_day(date: datetime, meetings: list[Meeting], commits: list[Commi
     # Each theme carries the weight of the session behind it, so a cluster of
     # fifteen commits gets more of the day than a cluster of one.
     themes: list[tuple[str, list[str], int]] = []
-    for group in (day_commits, day_prs, day_issues, day_reviews):
+    # Merges carry the same subjects as commits, so they share the commits' labels.
+    landed = sorted(day_commits + day_merges, key=lambda c: c.ts)
+    for group in (landed, day_prs, day_issues, day_reviews):
         for sess in _cluster(group, cfg.session_gap_minutes):
             project = classify_focus(sess, cfg)
             # Enough lines to cover the rows this theme's run could occupy, so a

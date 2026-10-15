@@ -35,7 +35,7 @@ class Commit:
     ts: datetime             # tz-aware, local
     repo: str
     message: str             # first line, merges already dropped
-    kind: str = "commit"     # commit | review | pr | issue
+    kind: str = "commit"     # commit | merge | review | pr | issue
 
 
 @dataclass

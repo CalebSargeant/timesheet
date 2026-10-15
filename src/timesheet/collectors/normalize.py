@@ -19,6 +19,9 @@ _UTC = ZoneInfo("UTC")
 # all-day), not a meeting. As a meeting it landed whole on the day it started:
 # one Monday-to-Friday event made a 106-hour Monday.
 _MULTI_DAY = timedelta(hours=24)
+# GitHub's squash title. Such a commit is stamped when the PR merged, not when its
+# work was done, so it is a moment, not the end of a coding session.
+_SQUASHED = re.compile(r"\(#\d+\)$")
 
 
 def _clean_subject(s: str) -> str:
@@ -112,6 +115,8 @@ def normalize_commits(raw: list[dict], tz: ZoneInfo) -> list[Commit]:
         msg = (c.get("message") or "").split("\n")[0].strip()
         if kind == "commit" and msg.lower().startswith("merge "):   # merges aren't authored work
             continue
+        if kind == "commit" and _SQUASHED.search(msg):
+            kind = "merge"
         out.append(Commit(ts=ts, repo=c.get("repo", "?"), message=msg, kind=kind))
     out.sort(key=lambda x: x.ts)
     return out

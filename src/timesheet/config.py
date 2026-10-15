@@ -39,7 +39,10 @@ from . import i18n
 # v14: no day runs past the next day's rollover hour, and a timed calendar event of
 #      24h or more owns the days it covers like an all-day one. It used to land
 #      whole on its first day: one Monday-to-Friday event made a 106-hour Monday.
-RECONSTRUCT_VERSION = 14
+# v15: a squash-merge commit ("title (#123)") is a merge, stamped when the PR landed:
+#      credited like a PR opened, never as a git-hours session, and it no longer
+#      opens the day early. Merges came in batches at night and made 100h weeks.
+RECONSTRUCT_VERSION = 15
 
 
 @dataclass(frozen=True)

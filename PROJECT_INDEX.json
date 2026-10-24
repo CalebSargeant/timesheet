@@ -1,6 +1,6 @@
 {
-  "generated": "2026-10-08",
-  "version": "0.3.3",
+  "generated": "2026-10-21",
+  "version": "0.3.8",
   "description": "Reconstructs a working week from calendar, mail, chat, and GitHub activity; renders HTML and XLSX.",
   "entry_points": {
     "web_service": "src/timesheet/service/main.py",
@@ -11,7 +11,7 @@
   "modules": {
     "core": {
       "src/timesheet/reconstruct.py": {
-        "lines": 393,
+        "lines": 404,
         "role": "Pure reconstruction core: calendar anchors → correspondence sittings → day-length estimate → free-time fill. No I/O."
       },
       "src/timesheet/activity.py": {
@@ -23,7 +23,7 @@
         "role": "Data model: Day, Block, Week, and their serialisation."
       },
       "src/timesheet/config.py": {
-        "lines": 206,
+        "lines": 212,
         "role": "Config dataclass (frozen), all knobs with defaults. RECONSTRUCT_VERSION cache gate. from_env() and with_settings() entry points."
       },
       "src/timesheet/periods.py": {
@@ -65,7 +65,7 @@
         "role": "Raw connector output → normalised ActivityEvent list."
       },
       "src/timesheet/collectors/github.py": {
-        "lines": 253,
+        "lines": 259,
         "role": "GitHub connector: commits, PRs opened, issues authored, PR reviews. Handles github.com, GHE Cloud (.ghe.com), and GHES (/api/v3)."
       },
       "src/timesheet/collectors/m365_graph.py": {
@@ -91,7 +91,7 @@
         "role": "Package init."
       },
       "src/timesheet/render/html.py": {
-        "lines": 68,
+        "lines": 69,
         "role": "Live HTML timesheet page renderer."
       },
       "src/timesheet/render/xlsx.py": {
@@ -109,15 +109,15 @@
     },
     "service": {
       "src/timesheet/service/main.py": {
-        "lines": 731,
-        "role": "FastAPI app. All routes: /, /auth/*, /connect/microsoft/*, /settings, /deliver/*, /account/delete, /timesheet.xlsx, /d/{uid}/{token}/timesheet.xlsx, /api/ingest, /status, /healthz."
+        "lines": 732,
+        "role": "FastAPI app. All routes: /, /auth/*, /connections, /connect/microsoft/*, /settings, /deliver/*, /account/delete, /timesheet.xlsx, /d/{uid}/{token}/timesheet.xlsx, /api/ingest, /status, /healthz."
       },
       "src/timesheet/service/auth.py": {
         "lines": 497,
         "role": "GitHub OAuth (github.com + GHE). Signed stateless state param, session cookie, ACCESS_POLICY enforcement, token renewal."
       },
       "src/timesheet/service/store.py": {
-        "lines": 439,
+        "lines": 449,
         "role": "Persistence: PgStore (PostgreSQL) and FileStore (local dev). make_store() picks by DATABASE_URL. Every read takes a user_id — no cross-account queries possible."
       },
       "src/timesheet/service/users.py": {
@@ -125,11 +125,11 @@
         "role": "User record, settings CRUD, account deletion."
       },
       "src/timesheet/service/delivery.py": {
-        "lines": 232,
+        "lines": 257,
         "role": "Delivery orchestration: email and Teams chat channels. DELIVERY_CHAT_ENABLED is off by default."
       },
       "src/timesheet/service/email.py": {
-        "lines": 305,
+        "lines": 326,
         "role": "Email transport: SMTP and Mailgun HTTP API. Both build the same MIME message. Check (test-mode Mailgun / SMTP probe) and send-to-me paths."
       },
       "src/timesheet/service/crypto.py": {
@@ -141,7 +141,7 @@
         "role": "CSRF token generation and validation."
       },
       "src/timesheet/service/web.py": {
-        "lines": 326,
+        "lines": 335,
         "role": "HTML page rendering helpers, template context, response builders."
       },
       "src/timesheet/service/mcp_connect.py": {
@@ -151,7 +151,7 @@
     },
     "cli": {
       "src/timesheet/run.py": {
-        "lines": 185,
+        "lines": 189,
         "role": "CLI entry point: reconstruct all/one account, optional --send, --list, --user."
       },
       "src/timesheet/demo.py": {

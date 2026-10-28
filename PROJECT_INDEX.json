@@ -1,6 +1,6 @@
 {
-  "generated": "2026-10-14",
-  "version": "0.3.3",
+  "generated": "2026-10-21",
+  "version": "0.3.8",
   "description": "Reconstructs a working week from calendar, mail, chat, and GitHub activity; renders HTML and XLSX.",
   "entry_points": {
     "web_service": "src/timesheet/service/main.py",
@@ -11,7 +11,7 @@
   "modules": {
     "core": {
       "src/timesheet/reconstruct.py": {
-        "lines": 401,
+        "lines": 404,
         "role": "Pure reconstruction core: calendar anchors → correspondence sittings → day-length estimate → free-time fill. No I/O."
       },
       "src/timesheet/activity.py": {
@@ -23,7 +23,7 @@
         "role": "Data model: Day, Block, Week, and their serialisation."
       },
       "src/timesheet/config.py": {
-        "lines": 209,
+        "lines": 212,
         "role": "Config dataclass (frozen), all knobs with defaults. RECONSTRUCT_VERSION cache gate. from_env() and with_settings() entry points."
       },
       "src/timesheet/periods.py": {
@@ -91,7 +91,7 @@
         "role": "Package init."
       },
       "src/timesheet/render/html.py": {
-        "lines": 68,
+        "lines": 69,
         "role": "Live HTML timesheet page renderer."
       },
       "src/timesheet/render/xlsx.py": {
@@ -110,7 +110,7 @@
     "service": {
       "src/timesheet/service/main.py": {
         "lines": 732,
-        "role": "FastAPI app. All routes: /, /auth/*, /connect/microsoft/*, /settings, /deliver/*, /account/delete, /timesheet.xlsx, /d/{uid}/{token}/timesheet.xlsx, /api/ingest, /status, /healthz."
+        "role": "FastAPI app. All routes: /, /auth/*, /connections, /connect/microsoft/*, /settings, /deliver/*, /account/delete, /timesheet.xlsx, /d/{uid}/{token}/timesheet.xlsx, /api/ingest, /status, /healthz."
       },
       "src/timesheet/service/auth.py": {
         "lines": 497,

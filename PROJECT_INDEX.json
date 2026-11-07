@@ -61,7 +61,7 @@
         "role": "Re-exports normalize_activity, normalize_commits."
       },
       "src/timesheet/collectors/normalize.py": {
-        "lines": 126,
+        "lines": 141,
         "role": "Raw connector output → normalised ActivityEvent list."
       },
       "src/timesheet/collectors/github.py": {

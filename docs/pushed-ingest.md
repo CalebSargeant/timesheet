@@ -1,5 +1,7 @@
 # Pushing signals in from outside
 
+<!-- sources: src/timesheet/service/main.py, src/timesheet/pipeline.py -->
+
 > **Most people do not need this.** Connect Microsoft from the Connections page
 > and the service reads calendar, mail and chat itself, with no flow to build and
 > no flow to maintain.

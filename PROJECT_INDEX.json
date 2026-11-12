@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-21",
+  "generated": "2026-11-11",
   "version": "0.3.8",
   "description": "Reconstructs a working week from calendar, mail, chat, and GitHub activity; renders HTML and XLSX.",
   "entry_points": {
@@ -61,7 +61,7 @@
         "role": "Re-exports normalize_activity, normalize_commits."
       },
       "src/timesheet/collectors/normalize.py": {
-        "lines": 141,
+        "lines": 146,
         "role": "Raw connector output → normalised ActivityEvent list."
       },
       "src/timesheet/collectors/github.py": {

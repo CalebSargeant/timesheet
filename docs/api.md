@@ -1,5 +1,7 @@
 # HTTP API
 
+<!-- sources: src/timesheet/service/main.py -->
+
 Every route that returns data resolves the signed-in account first and reads only
 that account's rows. There is no route here capable of returning one person's week
 to another.

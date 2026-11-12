@@ -47,7 +47,8 @@ stale stored weeks automatically on the next read.
 
 - **`SECRET_KEY` is non-negotiable.** Without it the service refuses to store tokens at
   all — never add a plaintext fallback.
-- **Releases are org-managed.** `release.yml` is caldrith's — tune from `MagmaMoose/admin`.
+- **Releases are tag-driven.** A `v*` tag runs `release.yml`: multi-arch image (cosign-signed)
+  and Helm chart, both to GHCR. A merge to `main` releases nothing.
 - **No I/O inside the reconstruction core** (`reconstruct.py`, `activity.py`,
   `periods.py`, `timeutil.py`, `model.py`). Collectors and the web layer are the edges.
 - Python ≥ 3.11, **pytest + Ruff**, `src/` layout, `tests/` mirrors modules. MIT.

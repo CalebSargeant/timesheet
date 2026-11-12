@@ -47,7 +47,8 @@ Collectors are in `collectors/`; renderers in `render/`; web service in `service
   never add a plaintext fallback.
 - **No I/O inside the reconstruction core** (`reconstruct.py`, `activity.py`,
   `periods.py`, `timeutil.py`, `model.py`).
-- **Releases are org-managed** via `MagmaMoose/admin`.
+- **Releases are tag-driven.** A `v*` tag runs `release.yml` (multi-arch image, cosign-signed,
+  and the Helm chart, both to GHCR); a merge to `main` releases nothing.
 - Python ≥ 3.11, pytest + Ruff, `src/` layout, `tests/` mirrors modules. MIT.
 
 ## Context files

@@ -205,18 +205,6 @@ def choices() -> list[tuple[str, str]]:
     return [(loc.code, loc.name) for loc in LOCALES.values()]
 
 
-def _union(attr: str) -> tuple[str, ...]:
-    """Every locale's value for a label, lowercased — for cross-locale matching."""
-    out: set[str] = set()
-    for loc in LOCALES.values():
-        value = getattr(loc, attr)
-        if isinstance(value, str):
-            out.add(value.lower())
-        else:
-            out.update(v.lower() for v in value)
-    return tuple(sorted(out))
-
-
 # --- markers: matched across every locale at once, never just the active one ---
 
 # A day-long busy event whose subject says any of these is an absence.

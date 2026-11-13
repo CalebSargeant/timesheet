@@ -20,7 +20,7 @@ than about the reader's hours.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from itertools import pairwise
 
 from .config import Config, SignalSpec
@@ -185,19 +185,3 @@ def label(session: ActivitySession, cfg: Config) -> tuple[str, str]:
         "email_received": "emails received",
     }.get(session.kind, "messages")
     return project, f"{session.count} {noun}"
-
-
-def spread(found: list[ActivitySession], gap: timedelta = timedelta(minutes=1)) -> list[Interval]:
-    """The spans correspondence actually occupied, merged where they touch.
-
-    Used to decide which free-time chunk gets a correspondence label rather than a
-    generic admin one.
-    """
-    spans = sorted((s.start, max(s.end, s.start)) for s in found)
-    out: list[Interval] = []
-    for s, e in spans:
-        if out and s - out[-1][1] <= gap:
-            out[-1] = (out[-1][0], max(out[-1][1], e))
-        else:
-            out.append((s, e))
-    return out

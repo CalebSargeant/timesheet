@@ -3,7 +3,7 @@
 This is the part that most easily turns into fiction, so the numbers are pinned
 down in both directions: a burst of chat must not become an afternoon, and a
 morning's real back-and-forth must not become nothing."""
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from timesheet import activity as act
@@ -127,10 +127,3 @@ def test_labels_follow_the_locale():
     cfg = Config(locale="nl")
     found = act.sessions([at(10, kind="chat")], cfg.chat)
     assert act.label(found[0], cfg)[0] == "Teams / overleg"
-
-
-def test_spread_merges_touching_sittings():
-    found = act.sessions([at(10), at(10, 10)], SPEC) + act.sessions([at(10, 11)], SPEC)
-    merged = act.spread(found)
-    assert len(merged) == 1
-    assert merged[0][1] - merged[0][0] == timedelta(minutes=11)

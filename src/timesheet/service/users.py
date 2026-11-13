@@ -209,20 +209,6 @@ def for_config(settings: dict) -> dict:
 
 
 @dataclass
-class Connection:
-    """One linked external account."""
-    provider: str                  # github | microsoft
-    account: str = ""              # what to show the user: a login, a UPN
-    connected_at: datetime | None = None
-    last_used: datetime | None = None
-    error: str = ""                # the last failure, so the UI can say "reconnect"
-
-    @property
-    def ok(self) -> bool:
-        return bool(self.account) and not self.error
-
-
-@dataclass
 class User:
     id: str                        # 'github.com:12345' — host + immutable account id
     login: str

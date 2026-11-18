@@ -1,5 +1,5 @@
 {
-  "generated": "2026-11-11",
+  "generated": "2026-11-18",
   "version": "0.3.8",
   "description": "Reconstructs a working week from calendar, mail, chat, and GitHub activity; renders HTML and XLSX.",
   "entry_points": {
@@ -15,7 +15,7 @@
         "role": "Pure reconstruction core: calendar anchors → correspondence sittings → day-length estimate → free-time fill. No I/O."
       },
       "src/timesheet/activity.py": {
-        "lines": 203,
+        "lines": 187,
         "role": "Normalised activity events → git-hours estimate, correspondence sessions, block candidates."
       },
       "src/timesheet/model.py": {
@@ -35,7 +35,7 @@
         "role": "Time arithmetic: hm(), snap to grid, overlap clipping."
       },
       "src/timesheet/i18n.py": {
-        "lines": 277,
+        "lines": 265,
         "role": "Locale strings (en/nl), cross-locale markers, Labels accessor with user overrides."
       },
       "src/timesheet/summarize.py": {
@@ -121,7 +121,7 @@
         "role": "Persistence: PgStore (PostgreSQL) and FileStore (local dev). make_store() picks by DATABASE_URL. Every read takes a user_id — no cross-account queries possible."
       },
       "src/timesheet/service/users.py": {
-        "lines": 282,
+        "lines": 268,
         "role": "User record, settings CRUD, account deletion."
       },
       "src/timesheet/service/delivery.py": {

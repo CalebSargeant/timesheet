@@ -46,3 +46,5 @@ nav:
   - API:
       - HTTP API: api.md
       - Pushed ingest: pushed-ingest.md
+  - Reference:
+      - Configuration: reference/configuration.md
